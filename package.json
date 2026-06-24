@@ -1,0 +1,63 @@
+{
+  "name": "glab-axi",
+  "version": "0.1.0",
+  "description": "AXI-compliant glab CLI wrapper for GitLab - token-efficient TOON output, contextual suggestions, idempotent mutations. Works with gitlab.com and self-hosted instances.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Christopher McKay",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/karotkriss/glab-axi.git"
+  },
+  "keywords": [
+    "gitlab",
+    "cli",
+    "agent",
+    "axi",
+    "toon",
+    "glab"
+  ],
+  "bin": {
+    "glab-axi": "./dist/bin/glab-axi.js"
+  },
+  "files": [
+    "dist",
+    "skills/glab-axi",
+    "LICENSE",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "build:skill": "tsx scripts/build-skill.ts",
+    "skill:check": "tsx scripts/build-skill.ts --check",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "dev": "tsx bin/glab-axi.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@toon-format/toon": "^2.3.0",
+    "axi-sdk-js": "^0.1.7"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "@types/node": "^22.0.0",
+    "eslint": "^9.0.0",
+    "globals": "^15.0.0",
+    "prettier": "^3.3.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.0.0",
+    "vitest": "^3.0.0",
+    "yaml": "^2.5.0"
+  }
+}
