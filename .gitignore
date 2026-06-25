@@ -4,3 +4,7 @@ dist/
 .DS_Store
 coverage/
 .env
+
+# Skill-install artifacts (regenerable, not source)
+.agents/
+skills-lock.json
