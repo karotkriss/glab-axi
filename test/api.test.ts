@@ -213,6 +213,13 @@ describe("api errors and help", () => {
     );
   });
 
+  it("rejects a lone HTTP method with no path (does not GET a path named 'POST')", async () => {
+    await expect(apiCommand(["POST"], ctx)).rejects.toThrow(
+      "API path is required",
+    );
+    expect(glApiResultMock).not.toHaveBeenCalled();
+  });
+
   it("throws a mapped error when the request exits non-zero", async () => {
     glApiResultMock.mockResolvedValueOnce({
       stdout: "",

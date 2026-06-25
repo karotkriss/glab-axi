@@ -33,7 +33,9 @@ export function parseFields(
         .filter(Boolean),
     ),
   ];
-  const unknown = requested.filter((f) => !(f in available));
+  const unknown = requested.filter(
+    (f) => !Object.prototype.hasOwnProperty.call(available, f),
+  );
   if (unknown.length > 0) {
     const availableNames = Object.keys(available).sort().join(", ");
     throw new AxiError(

@@ -137,6 +137,10 @@ describe("issue view", () => {
     expect(glApiMock.mock.calls[1][0]).toContain("sort=asc");
     expect(out).toContain("bob");
     expect(out).not.toContain("sysbot");
+    // No duplicate `comments` field: the count hint must be replaced by the
+    // expanded comments, not emitted alongside them.
+    expect(out).not.toContain("use --comments to read them");
+    expect(out.match(/(^|\n)\s*comments[:[]/g)?.length ?? 0).toBe(1);
   });
 });
 

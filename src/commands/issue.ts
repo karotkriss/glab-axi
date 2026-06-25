@@ -81,7 +81,7 @@ const LIST_EXTRA_FIELDS: Record<string, FieldSpec> = {
   },
 };
 
-function viewSchema(full: boolean): FieldDef[] {
+function viewSchema(full: boolean, includeComments: boolean): FieldDef[] {
   const base: FieldDef[] = [
     field("iid"),
     field("title"),
@@ -90,15 +90,17 @@ function viewSchema(full: boolean): FieldDef[] {
     joinArray("labels", "name", "labels"),
     pluck("milestone", "title", "milestone"),
   ];
-  if (full) {
+  base.push(
+    full
+      ? custom("body", (i) =>
+          typeof i.description === "string" ? i.description : "",
+        )
+      : custom("body", (i) => truncateBody(i.description, 500)),
+  );
+  // The count hint is only useful when the caller is NOT already expanding the
+  // full comments via --comments (which appends its own `comments` field).
+  if (!includeComments) {
     base.push(
-      custom("body", (i) =>
-        typeof i.description === "string" ? i.description : "",
-      ),
-    );
-  } else {
-    base.push(
-      custom("body", (i) => truncateBody(i.description, 500)),
       custom(
         "comments",
         (i) => `${i.user_notes_count ?? 0} — use --comments to read them`,
@@ -192,7 +194,7 @@ async function issueView(args: string[], ctx?: RepoContext): Promise<string> {
   const iid = takeNumber(args, "issue");
   const issue = await glApi<Json>(issuePath(ctx, iid), { ctx });
 
-  const schema = viewSchema(full);
+  const schema = viewSchema(full, includeComments);
   if (includeComments) {
     const notes = await glApi<Json[]>(
       `${issuePath(ctx, iid, "/notes")}?per_page=100&sort=asc`,

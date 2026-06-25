@@ -133,6 +133,17 @@ function parseMethodAndPath(positionals: string[]): {
   ) {
     return { method: positionals[0].toUpperCase(), path: positionals[1] };
   }
+  // A lone recognized HTTP method with no path (e.g. `api POST`) is a usage
+  // error, not a GET request to a path literally named "POST".
+  if (
+    positionals.length === 1 &&
+    METHODS.includes(positionals[0].toUpperCase())
+  ) {
+    throw new AxiError(
+      "API path is required: glab-axi api [<method>] <path>",
+      "VALIDATION_ERROR",
+    );
+  }
   return { method: "GET", path: positionals[0] };
 }
 
