@@ -1,0 +1,651 @@
+import { glApi, projectId, requireProject, type Json } from "../gl.js";
+import { AxiError } from "../errors.js";
+import type { RepoContext } from "../context.js";
+import { takeBody, truncateBody } from "../body.js";
+import { formatCountLine } from "../format.js";
+import { getSuggestions, repoFlag } from "../suggestions.js";
+import { takeFlag, takeBoolFlag, takeNumber, parseLimit } from "../args.js";
+import { parseFields, type FieldSpec } from "../fields.js";
+import { resolveUserId, resolveMilestoneId } from "../resolve.js";
+import {
+  field,
+  pluck,
+  lower,
+  boolYesNo,
+  relativeTime,
+  joinArray,
+  custom,
+  renderList,
+  renderDetail,
+  renderHelp,
+  renderError,
+  renderOutput,
+  type FieldDef,
+} from "../toon.js";
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Map a user-facing state to the GitLab MR state value. */
+function mapState(input: string | undefined): string {
+  switch ((input ?? "opened").toLowerCase()) {
+    case "open":
+    case "opened":
+      return "opened";
+    case "closed":
+      return "closed";
+    case "merged":
+      return "merged";
+    case "locked":
+      return "locked";
+    case "all":
+      return "all";
+    default:
+      return input!.toLowerCase();
+  }
+}
+
+const DRAFT_PREFIX =
+  /^\s*(\[draft\]|\(draft\)|draft:|\[wip\]|\(wip\)|wip:)\s*/i;
+
+/** Strip a leading Draft/WIP prefix from an MR title. */
+function stripDraft(title: string): string {
+  return title.replace(DRAFT_PREFIX, "").trim();
+}
+
+function mrPath(
+  ctx: RepoContext | undefined,
+  iid: number,
+  suffix = "",
+): string {
+  return `projects/${requireProject(ctx)}/merge_requests/${iid}${suffix}`;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// ---------------------------------------------------------------------------
+// Schemas
+// ---------------------------------------------------------------------------
+
+const listSchema: FieldDef[] = [
+  field("iid"),
+  field("title"),
+  lower("state"),
+  pluck("author", "username", "author"),
+  boolYesNo("draft", "draft"),
+];
+
+const LIST_EXTRA_FIELDS: Record<string, FieldSpec> = {
+  source_branch: { jsonKey: "source_branch", def: field("source_branch") },
+  target_branch: { jsonKey: "target_branch", def: field("target_branch") },
+  labels: { jsonKey: "labels", def: joinArray("labels", "name", "labels") },
+  milestone: {
+    jsonKey: "milestone",
+    def: pluck("milestone", "title", "milestone"),
+  },
+  created: {
+    jsonKey: "created_at",
+    def: relativeTime("created_at", "created"),
+  },
+  updated: {
+    jsonKey: "updated_at",
+    def: relativeTime("updated_at", "updated"),
+  },
+  merge_status: {
+    jsonKey: "detailed_merge_status",
+    def: field("detailed_merge_status", "merge_status"),
+  },
+  url: { jsonKey: "web_url", def: field("web_url", "url") },
+  assignees: {
+    jsonKey: "assignees",
+    def: joinArray("assignees", "username", "assignees"),
+  },
+};
+
+function viewSchema(full: boolean): FieldDef[] {
+  const base: FieldDef[] = [
+    field("iid"),
+    field("title"),
+    lower("state"),
+    pluck("author", "username", "author"),
+    boolYesNo("draft", "draft"),
+    field("source_branch"),
+    field("target_branch"),
+    field("detailed_merge_status", "merge_status"),
+  ];
+  if (full) {
+    base.push(
+      custom("has_conflicts", (m) => (m.has_conflicts ? "yes" : "no")),
+      custom("pipeline", (m) => m.head_pipeline?.status ?? "none"),
+      custom("comments", (m) => m.user_notes_count ?? 0),
+      custom("web_url", (m) => m.web_url ?? ""),
+      custom("body", (m) =>
+        typeof m.description === "string" ? m.description : "",
+      ),
+    );
+  } else {
+    base.push(
+      custom(
+        "comments",
+        (m) => `${m.user_notes_count ?? 0} — use --comments to read them`,
+      ),
+      custom("body", (m) => truncateBody(m.description, 500)),
+    );
+  }
+  return base;
+}
+
+// ---------------------------------------------------------------------------
+// Help
+// ---------------------------------------------------------------------------
+
+export const MR_HELP = `usage: glab-axi mr <subcommand> [flags]
+subcommands[7]:
+  list, view <iid>, create, update <iid>, merge <iid>, approve <iid>, comment <iid>
+flags{list}:
+  --state <opened|closed|merged|all>, --source-branch <b>, --target-branch <b>, --label, --author <user>, --assignee <user>, --milestone <name>, --draft, --limit <n> (default 30), --fields <a,b,c>
+flags{view}:
+  --comments (include discussion notes), --full (merge status, pipeline, full body)
+flags{create}:
+  --title <text> (required), --source-branch <b> (required), --target-branch <b> (default: project default), --body <text> or --body-file <path>, --assignee <user>, --reviewer <user>, --label <a,b>, --milestone <name>, --draft, --remove-source-branch, --squash
+flags{update}:
+  --title, --body or --body-file, --label, --milestone <name>, --assignee <user>, --target-branch, --ready (clear Draft), --draft (mark Draft), --close, --reopen
+flags{merge}:
+  --method <merge|squash|rebase>, --merge, --squash, --rebase, --remove-source-branch, --body or --body-file (merge commit message)
+flags{approve}:
+  (none)
+flags{comment}:
+  --body <text> or --body-file <path> (required)
+examples:
+  glab-axi mr list --state opened --source-branch feature-1
+  glab-axi mr view 42 --full
+  glab-axi mr create --title "Add X" --source-branch feat --target-branch main
+  glab-axi mr merge 42 --squash --remove-source-branch
+  glab-axi mr update 42 --ready`;
+
+// ---------------------------------------------------------------------------
+// Subcommands
+// ---------------------------------------------------------------------------
+
+async function mrList(args: string[], ctx?: RepoContext): Promise<string> {
+  const fieldsArg = takeFlag(args, "--fields");
+  const { extraDefs } = parseFields(fieldsArg, LIST_EXTRA_FIELDS);
+  const state = mapState(takeFlag(args, "--state"));
+  const sourceBranch = takeFlag(args, "--source-branch");
+  const targetBranch = takeFlag(args, "--target-branch");
+  const label = takeFlag(args, "--label");
+  const author = takeFlag(args, "--author");
+  const assignee = takeFlag(args, "--assignee");
+  const milestone = takeFlag(args, "--milestone");
+  const draft = takeBoolFlag(args, "--draft");
+  const limit = parseLimit(takeFlag(args, "--limit"), 30);
+
+  const params = new URLSearchParams();
+  if (state !== "all") params.set("state", state);
+  if (sourceBranch) params.set("source_branch", sourceBranch);
+  if (targetBranch) params.set("target_branch", targetBranch);
+  if (label) params.set("labels", label);
+  if (author) params.set("author_username", author);
+  if (assignee) params.set("assignee_username", assignee);
+  if (milestone) params.set("milestone", milestone);
+  if (draft) params.set("wip", "yes");
+  params.set("per_page", String(limit));
+  params.set("order_by", "updated_at");
+
+  const items = await glApi<Json[]>(
+    `projects/${requireProject(ctx)}/merge_requests?${params.toString()}`,
+    { ctx },
+  );
+  const isEmpty = items.length === 0;
+  const countLine = formatCountLine({ count: items.length, limit });
+  const schema =
+    extraDefs.length > 0 ? [...listSchema, ...extraDefs] : listSchema;
+
+  if (isEmpty) {
+    return renderOutput([
+      "merge_requests: 0 matching merge requests found",
+      renderHelp(
+        getSuggestions({ domain: "mr", action: "list", isEmpty, repo: ctx }),
+      ),
+    ]);
+  }
+  return renderOutput([
+    countLine,
+    renderList("merge_requests", items, schema),
+    renderHelp(
+      getSuggestions({ domain: "mr", action: "list", isEmpty, repo: ctx }),
+    ),
+  ]);
+}
+
+async function mrView(args: string[], ctx?: RepoContext): Promise<string> {
+  const includeComments = takeBoolFlag(args, "--comments");
+  const full = takeBoolFlag(args, "--full");
+  const iid = takeNumber(args, "merge request");
+  const mr = await glApi<Json>(mrPath(ctx, iid), { ctx });
+
+  const schema = viewSchema(full);
+  if (includeComments) {
+    const notes = await glApi<Json[]>(
+      `${mrPath(ctx, iid, "/notes")}?per_page=100&sort=asc`,
+      { ctx },
+    );
+    const real = (notes ?? []).filter((n) => !n.system);
+    schema.push(
+      custom("comments", () =>
+        real.map((n) => ({
+          author: n.author?.username ?? "unknown",
+          body: n.body ?? "",
+          created: n.created_at ?? "",
+        })),
+      ),
+    );
+  }
+  return renderOutput([
+    renderDetail("merge_request", mr, schema),
+    renderHelp(
+      getSuggestions({
+        domain: "mr",
+        action: "view",
+        id: iid,
+        state: mr.state,
+        repo: ctx,
+      }),
+    ),
+  ]);
+}
+
+async function defaultBranch(ctx?: RepoContext): Promise<string> {
+  const proj = await glApi<Json>(`projects/${projectId(ctx)}`, { ctx });
+  return proj.default_branch ?? "main";
+}
+
+async function mrCreate(args: string[], ctx?: RepoContext): Promise<string> {
+  requireProject(ctx);
+  let title = takeFlag(args, "--title");
+  if (!title) throw new AxiError("--title is required", "VALIDATION_ERROR");
+  const sourceBranch = takeFlag(args, "--source-branch");
+  if (!sourceBranch)
+    throw new AxiError("--source-branch is required", "VALIDATION_ERROR", [
+      'glab-axi mr create --title "..." --source-branch <branch> [--target-branch <branch>]',
+    ]);
+  const targetBranch =
+    takeFlag(args, "--target-branch") ?? (await defaultBranch(ctx));
+  const body = takeBody(args);
+  const assignee = takeFlag(args, "--assignee");
+  const reviewer = takeFlag(args, "--reviewer");
+  const label = takeFlag(args, "--label");
+  const milestone = takeFlag(args, "--milestone");
+  const draft = takeBoolFlag(args, "--draft");
+  const removeSource = takeBoolFlag(args, "--remove-source-branch");
+  const squash = takeBoolFlag(args, "--squash");
+
+  if (draft && !DRAFT_PREFIX.test(title)) title = `Draft: ${title}`;
+
+  const rawFields = [
+    `source_branch=${sourceBranch}`,
+    `target_branch=${targetBranch}`,
+    `title=${title}`,
+  ];
+  if (body !== undefined) rawFields.push(`description=${body}`);
+  if (label) rawFields.push(`labels=${label}`);
+  const fields: string[] = [];
+  if (assignee)
+    fields.push(`assignee_id=${await resolveUserId(assignee, ctx)}`);
+  if (reviewer)
+    fields.push(`reviewer_ids=${await resolveUserId(reviewer, ctx)}`);
+  if (milestone)
+    fields.push(`milestone_id=${await resolveMilestoneId(milestone, ctx)}`);
+  if (removeSource) fields.push("remove_source_branch=true");
+  if (squash) fields.push("squash=true");
+
+  const mr = await glApi<Json>(
+    `projects/${requireProject(ctx)}/merge_requests`,
+    {
+      method: "POST",
+      rawFields,
+      fields,
+      ctx,
+    },
+  );
+  return renderOutput([
+    renderDetail("created", { iid: mr.iid, title: mr.title, url: mr.web_url }, [
+      field("iid"),
+      field("title"),
+      field("url"),
+    ]),
+    renderHelp(
+      getSuggestions({ domain: "mr", action: "create", id: mr.iid, repo: ctx }),
+    ),
+  ]);
+}
+
+async function mrUpdate(args: string[], ctx?: RepoContext): Promise<string> {
+  const iid = takeNumber(args, "merge request");
+  const title = takeFlag(args, "--title");
+  const body = takeBody(args);
+  const label = takeFlag(args, "--label");
+  const milestone = takeFlag(args, "--milestone");
+  const assignee = takeFlag(args, "--assignee");
+  const targetBranch = takeFlag(args, "--target-branch");
+  const ready = takeBoolFlag(args, "--ready");
+  const draft = takeBoolFlag(args, "--draft");
+  const close = takeBoolFlag(args, "--close");
+  const reopen = takeBoolFlag(args, "--reopen");
+
+  const rawFields: string[] = [];
+  const fields: string[] = [];
+  if (title) rawFields.push(`title=${title}`);
+  if (body !== undefined) rawFields.push(`description=${body}`);
+  if (label) rawFields.push(`labels=${label}`);
+  if (targetBranch) rawFields.push(`target_branch=${targetBranch}`);
+  if (milestone)
+    fields.push(`milestone_id=${await resolveMilestoneId(milestone, ctx)}`);
+  if (assignee)
+    fields.push(`assignee_id=${await resolveUserId(assignee, ctx)}`);
+  if (close) fields.push("state_event=close");
+  if (reopen) fields.push("state_event=reopen");
+  if (draft && !title) {
+    // Mark as draft by re-titling the current title.
+    const current = await glApi<Json>(mrPath(ctx, iid), { ctx });
+    const t = current.title ?? "";
+    if (!DRAFT_PREFIX.test(t)) rawFields.push(`title=Draft: ${t}`);
+  }
+
+  let result: Json | undefined;
+  if (rawFields.length > 0 || fields.length > 0) {
+    result = await glApi<Json>(mrPath(ctx, iid), {
+      method: "PUT",
+      rawFields,
+      fields,
+      ctx,
+    });
+  }
+
+  // --ready: clear the Draft prefix in a final PUT and render that response
+  // (not the stale pre-update state).
+  if (ready) {
+    const currentTitle =
+      result?.title ??
+      (await glApi<Json>(mrPath(ctx, iid), { ctx })).title ??
+      "";
+    const cleaned = stripDraft(currentTitle);
+    result = await glApi<Json>(mrPath(ctx, iid), {
+      method: "PUT",
+      rawFields: [`title=${cleaned}`],
+      ctx,
+    });
+  }
+
+  if (!result) {
+    throw new AxiError("No update flags provided", "VALIDATION_ERROR", [
+      "Pass at least one of --title, --body, --label, --assignee, --ready, --draft, --close, --reopen",
+    ]);
+  }
+  return renderOutput([
+    renderDetail(
+      "updated",
+      {
+        iid: result.iid,
+        title: result.title,
+        state: result.state,
+        draft: result.draft ? "yes" : "no",
+      },
+      [field("iid"), field("title"), lower("state"), field("draft")],
+    ),
+    renderHelp(
+      getSuggestions({ domain: "mr", action: "update", id: iid, repo: ctx }),
+    ),
+  ]);
+}
+
+const REBASE_POLL_INTERVAL_MS = 1500;
+const REBASE_POLL_MAX_ATTEMPTS = 30; // ~45s
+
+// detailed_merge_status values that are still settling — the merge endpoint
+// rejects a merge while in any of these, so we wait them out after a rebase.
+const TRANSIENT_MERGE_STATUS = new Set(["checking", "preparing", "unchecked"]);
+
+/**
+ * A rebase is asynchronous: GitLab kicks it off and updates the MR's SHA and
+ * merge status in the background. We poll until the rebase finishes AND the
+ * merge status settles out of its transient states, otherwise the immediate
+ * follow-up merge 422s.
+ */
+async function waitForRebase(iid: number, ctx?: RepoContext): Promise<void> {
+  for (let attempt = 0; attempt < REBASE_POLL_MAX_ATTEMPTS; attempt++) {
+    await sleep(REBASE_POLL_INTERVAL_MS);
+    const mr = await glApi<Json>(
+      `${mrPath(ctx, iid)}?include_rebase_in_progress=true`,
+      {
+        ctx,
+      },
+    );
+    if (mr.merge_error) {
+      throw new AxiError(`Rebase failed: ${mr.merge_error}`, "CONFLICT");
+    }
+    const rebaseDone =
+      mr.rebase_in_progress === false || mr.rebase_in_progress == null;
+    const statusSettled = !TRANSIENT_MERGE_STATUS.has(
+      mr.detailed_merge_status ?? "",
+    );
+    if (rebaseDone && statusSettled) {
+      return;
+    }
+  }
+  throw new AxiError(
+    `Rebase did not finish within ${(REBASE_POLL_INTERVAL_MS * REBASE_POLL_MAX_ATTEMPTS) / 1000}s`,
+    "TIMEOUT",
+    [
+      `Run \`glab-axi mr view ${iid} --full\` to check rebase progress, then retry merge`,
+    ],
+  );
+}
+
+async function mrMerge(args: string[], ctx?: RepoContext): Promise<string> {
+  const iid = takeNumber(args, "merge request");
+  const explicitMethod = takeFlag(args, "--method");
+  const shorthand = (["merge", "squash", "rebase"] as const).filter((m) =>
+    takeBoolFlag(args, `--${m}`),
+  );
+  if (shorthand.length > 1) {
+    throw new AxiError(
+      "Choose only one merge method: --merge, --squash, or --rebase",
+      "VALIDATION_ERROR",
+    );
+  }
+  if (
+    explicitMethod &&
+    shorthand.length === 1 &&
+    explicitMethod !== shorthand[0]
+  ) {
+    throw new AxiError(
+      "Choose either --method or a matching merge shorthand, not both",
+      "VALIDATION_ERROR",
+    );
+  }
+  const method = explicitMethod ?? shorthand[0];
+  if (method && !["merge", "squash", "rebase"].includes(method)) {
+    throw new AxiError(
+      "--method must be one of: merge, squash, rebase",
+      "VALIDATION_ERROR",
+    );
+  }
+  const removeSource =
+    takeBoolFlag(args, "--remove-source-branch") ||
+    takeBoolFlag(args, "--delete-branch");
+  const body = takeBody(args);
+
+  // Idempotent: already merged is a no-op.
+  const mr = await glApi<Json>(mrPath(ctx, iid), { ctx });
+  if ((mr.state ?? "") === "merged") {
+    return renderOutput([
+      renderDetail(
+        "merge_request",
+        {
+          iid,
+          state: "merged",
+          merged_by: mr.merged_by?.username ?? null,
+          already: true,
+        },
+        [field("iid"), field("state"), field("merged_by"), field("already")],
+      ),
+      renderHelp(
+        getSuggestions({ domain: "mr", action: "merge", id: iid, repo: ctx }),
+      ),
+    ]);
+  }
+  if ((mr.state ?? "") === "closed") {
+    throw new AxiError(
+      `Merge request !${iid} is closed and cannot be merged`,
+      "VALIDATION_ERROR",
+      [
+        `Run \`glab-axi${repoFlag({ domain: "mr", action: "merge", repo: ctx })} mr update ${iid} --reopen\` first`,
+      ],
+    );
+  }
+
+  // rebase is asynchronous: kick it off, poll to completion, THEN merge.
+  if (method === "rebase") {
+    await glApi<Json>(mrPath(ctx, iid, "/rebase"), { method: "PUT", ctx });
+    await waitForRebase(iid, ctx);
+  }
+
+  const fields: string[] = [];
+  const rawFields: string[] = [];
+  if (method === "squash") fields.push("squash=true");
+  if (removeSource) fields.push("should_remove_source_branch=true");
+  if (body !== undefined) rawFields.push(`merge_commit_message=${body}`);
+
+  const merged = await glApi<Json>(mrPath(ctx, iid, "/merge"), {
+    method: "PUT",
+    fields,
+    rawFields,
+    ctx,
+  });
+  return renderOutput([
+    renderDetail(
+      "merged",
+      {
+        iid: merged.iid ?? iid,
+        state: merged.state ?? "merged",
+        method: method ?? "merge",
+        merge_commit_sha:
+          merged.merge_commit_sha ?? merged.squash_commit_sha ?? null,
+      },
+      [
+        field("iid"),
+        field("state"),
+        field("method"),
+        field("merge_commit_sha"),
+      ],
+    ),
+    renderHelp(
+      getSuggestions({ domain: "mr", action: "merge", id: iid, repo: ctx }),
+    ),
+  ]);
+}
+
+async function mrApprove(args: string[], ctx?: RepoContext): Promise<string> {
+  const iid = takeNumber(args, "merge request");
+  try {
+    const result = await glApi<Json>(mrPath(ctx, iid, "/approve"), {
+      method: "POST",
+      ctx,
+    });
+    return renderOutput([
+      renderDetail(
+        "approved",
+        {
+          iid,
+          approvals:
+            result.approved_by?.length ?? result.approvals_required ?? "ok",
+        },
+        [field("iid"), field("approvals")],
+      ),
+      renderHelp(
+        getSuggestions({ domain: "mr", action: "approve", id: iid, repo: ctx }),
+      ),
+    ]);
+  } catch (err) {
+    // Idempotent: re-approving an already-approved MR is a no-op.
+    if (err instanceof AxiError && /already approved/i.test(err.message)) {
+      return renderOutput([
+        renderDetail("merge_request", { iid, approved: "yes", already: true }, [
+          field("iid"),
+          field("approved"),
+          field("already"),
+        ]),
+        renderHelp(
+          getSuggestions({
+            domain: "mr",
+            action: "approve",
+            id: iid,
+            repo: ctx,
+          }),
+        ),
+      ]);
+    }
+    throw err;
+  }
+}
+
+async function mrComment(args: string[], ctx?: RepoContext): Promise<string> {
+  const iid = takeNumber(args, "merge request");
+  const body = takeBody(args, { required: true });
+  await glApi<Json>(mrPath(ctx, iid, "/notes"), {
+    method: "POST",
+    rawFields: [`body=${body}`],
+    ctx,
+  });
+  return renderOutput([
+    renderDetail("commented", { iid, status: "ok" }, [
+      field("iid"),
+      field("status"),
+    ]),
+    renderHelp(
+      getSuggestions({ domain: "mr", action: "comment", id: iid, repo: ctx }),
+    ),
+  ]);
+}
+
+// ---------------------------------------------------------------------------
+// Router
+// ---------------------------------------------------------------------------
+
+export async function mrCommand(
+  args: string[],
+  ctx?: RepoContext,
+): Promise<string> {
+  const sub = args[0];
+  const rest = args.slice(1);
+  switch (sub) {
+    case "list":
+      return mrList(rest, ctx);
+    case "view":
+      return mrView(rest, ctx);
+    case "create":
+      return mrCreate(rest, ctx);
+    case "update":
+    case "edit":
+      return mrUpdate(rest, ctx);
+    case "merge":
+      return mrMerge(rest, ctx);
+    case "approve":
+      return mrApprove(rest, ctx);
+    case "comment":
+      return mrComment(rest, ctx);
+    case "--help":
+    case "-h":
+    case "help":
+    case undefined:
+      return MR_HELP;
+    default:
+      return renderError(`Unknown mr subcommand: ${sub}`, "VALIDATION_ERROR", [
+        "Run `glab-axi mr --help` to see available subcommands",
+      ]);
+  }
+}
