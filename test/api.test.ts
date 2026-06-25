@@ -58,6 +58,17 @@ describe("api method + path parsing", () => {
     expect(glApiResultMock.mock.calls[0][1].method).toBe("DELETE");
   });
 
+  it("parses the path even when a --field value precedes it", async () => {
+    glApiResultMock.mockResolvedValueOnce(ok([]));
+    await apiCommand(
+      ["--field", "state=opened", "projects/{project}/merge_requests"],
+      ctx,
+    );
+    const [path, opts] = glApiResultMock.mock.calls[0];
+    expect(path).toBe(`projects/${PID}/merge_requests`);
+    expect(opts.fields).toEqual(["state=opened"]);
+  });
+
   it("replaces the {project} placeholder with the encoded project id", async () => {
     glApiResultMock.mockResolvedValueOnce(ok({}));
     await apiCommand(["projects/{project}/repository/branches"], ctx);

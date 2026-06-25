@@ -195,10 +195,11 @@ async function mrList(args: string[], ctx?: RepoContext): Promise<string> {
   params.set("per_page", String(limit));
   params.set("order_by", "updated_at");
 
-  const items = await glApi<Json[]>(
-    `projects/${requireProject(ctx)}/merge_requests?${params.toString()}`,
-    { ctx },
-  );
+  const items =
+    (await glApi<Json[]>(
+      `projects/${requireProject(ctx)}/merge_requests?${params.toString()}`,
+      { ctx },
+    )) ?? [];
   const isEmpty = items.length === 0;
   const countLine = formatCountLine({ count: items.length, limit });
   const schema =
@@ -324,7 +325,6 @@ async function mrCreate(args: string[], ctx?: RepoContext): Promise<string> {
 }
 
 async function mrUpdate(args: string[], ctx?: RepoContext): Promise<string> {
-  const iid = takeNumber(args, "merge request");
   const title = takeFlag(args, "--title");
   const body = takeBody(args);
   const label = takeFlag(args, "--label");
@@ -335,10 +335,14 @@ async function mrUpdate(args: string[], ctx?: RepoContext): Promise<string> {
   const draft = takeBoolFlag(args, "--draft");
   const close = takeBoolFlag(args, "--close");
   const reopen = takeBoolFlag(args, "--reopen");
+  const iid = takeNumber(args, "merge request");
 
   const rawFields: string[] = [];
   const fields: string[] = [];
-  if (title) rawFields.push(`title=${title}`);
+  if (title)
+    rawFields.push(
+      `title=${draft && !DRAFT_PREFIX.test(title) ? `Draft: ${title}` : title}`,
+    );
   if (body !== undefined) rawFields.push(`description=${body}`);
   if (label) rawFields.push(`labels=${label}`);
   if (targetBranch) rawFields.push(`target_branch=${targetBranch}`);
@@ -446,11 +450,15 @@ async function waitForRebase(iid: number, ctx?: RepoContext): Promise<void> {
 }
 
 async function mrMerge(args: string[], ctx?: RepoContext): Promise<string> {
-  const iid = takeNumber(args, "merge request");
   const explicitMethod = takeFlag(args, "--method");
   const shorthand = (["merge", "squash", "rebase"] as const).filter((m) =>
     takeBoolFlag(args, `--${m}`),
   );
+  const removeSource =
+    takeBoolFlag(args, "--remove-source-branch") ||
+    takeBoolFlag(args, "--delete-branch");
+  const body = takeBody(args);
+  const iid = takeNumber(args, "merge request");
   if (shorthand.length > 1) {
     throw new AxiError(
       "Choose only one merge method: --merge, --squash, or --rebase",
@@ -474,10 +482,6 @@ async function mrMerge(args: string[], ctx?: RepoContext): Promise<string> {
       "VALIDATION_ERROR",
     );
   }
-  const removeSource =
-    takeBoolFlag(args, "--remove-source-branch") ||
-    takeBoolFlag(args, "--delete-branch");
-  const body = takeBody(args);
 
   // Idempotent: already merged is a no-op.
   const mr = await glApi<Json>(mrPath(ctx, iid), { ctx });
@@ -549,53 +553,58 @@ async function mrMerge(args: string[], ctx?: RepoContext): Promise<string> {
   ]);
 }
 
+/** True when the given username already appears in an approvals payload. */
+function isApprovedBy(approvals: Json, username: string | undefined): boolean {
+  if (!username) return false;
+  const approvers: Json[] = approvals?.approved_by ?? [];
+  return approvers.some((entry) => entry?.user?.username === username);
+}
+
 async function mrApprove(args: string[], ctx?: RepoContext): Promise<string> {
   const iid = takeNumber(args, "merge request");
-  try {
-    const result = await glApi<Json>(mrPath(ctx, iid, "/approve"), {
-      method: "POST",
-      ctx,
-    });
+
+  // Idempotent: if the current user has already approved, this is a no-op.
+  // Detect that up front via the approvals endpoint, because a repeat POST to
+  // /approve surfaces as an auth-style error that mapGlError rewrites, leaving
+  // no reliable "already approved" signal to key off afterwards.
+  const me = await glApi<Json>("user", { ctx });
+  const approvals = await glApi<Json>(mrPath(ctx, iid, "/approvals"), { ctx });
+  if (isApprovedBy(approvals, me?.username)) {
     return renderOutput([
-      renderDetail(
-        "approved",
-        {
-          iid,
-          approvals:
-            result.approved_by?.length ?? result.approvals_required ?? "ok",
-        },
-        [field("iid"), field("approvals")],
-      ),
+      renderDetail("merge_request", { iid, approved: "yes", already: true }, [
+        field("iid"),
+        field("approved"),
+        field("already"),
+      ]),
       renderHelp(
         getSuggestions({ domain: "mr", action: "approve", id: iid, repo: ctx }),
       ),
     ]);
-  } catch (err) {
-    // Idempotent: re-approving an already-approved MR is a no-op.
-    if (err instanceof AxiError && /already approved/i.test(err.message)) {
-      return renderOutput([
-        renderDetail("merge_request", { iid, approved: "yes", already: true }, [
-          field("iid"),
-          field("approved"),
-          field("already"),
-        ]),
-        renderHelp(
-          getSuggestions({
-            domain: "mr",
-            action: "approve",
-            id: iid,
-            repo: ctx,
-          }),
-        ),
-      ]);
-    }
-    throw err;
   }
+
+  const result = await glApi<Json>(mrPath(ctx, iid, "/approve"), {
+    method: "POST",
+    ctx,
+  });
+  return renderOutput([
+    renderDetail(
+      "approved",
+      {
+        iid,
+        approvals:
+          result.approved_by?.length ?? result.approvals_required ?? "ok",
+      },
+      [field("iid"), field("approvals")],
+    ),
+    renderHelp(
+      getSuggestions({ domain: "mr", action: "approve", id: iid, repo: ctx }),
+    ),
+  ]);
 }
 
 async function mrComment(args: string[], ctx?: RepoContext): Promise<string> {
-  const iid = takeNumber(args, "merge request");
   const body = takeBody(args, { required: true });
+  const iid = takeNumber(args, "merge request");
   await glApi<Json>(mrPath(ctx, iid, "/notes"), {
     method: "POST",
     rawFields: [`body=${body}`],

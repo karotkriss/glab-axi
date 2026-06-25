@@ -238,14 +238,52 @@ describe("mr update", () => {
     await mrCommand(["update", "42", "--close"], ctx);
     expect(glApiMock.mock.calls[0][1].fields).toContain("state_event=close");
   });
+
+  it("applies the Draft prefix to a provided --title when --draft is set", async () => {
+    glApiMock.mockResolvedValueOnce(mr({ title: "Draft: New", draft: true }));
+    await mrCommand(["update", "42", "--title", "New", "--draft"], ctx);
+    // Single PUT — no extra GET to fetch the current title.
+    expect(glApiMock.mock.calls.length).toBe(1);
+    expect(glApiMock.mock.calls[0][1].rawFields).toContain("title=Draft: New");
+  });
+
+  it("takes the iid even when a numeric flag value precedes it", async () => {
+    glApiMock.mockResolvedValueOnce(mr({ iid: 42, title: "5" }));
+    await mrCommand(["update", "--title", "5", "42"], ctx);
+    expect(glApiMock.mock.calls[0][0]).toBe(
+      `projects/${PID}/merge_requests/42`,
+    );
+    expect(glApiMock.mock.calls[0][1].rawFields).toContain("title=5");
+  });
 });
 
 describe("mr approve / comment", () => {
-  it("approve POSTs to /approve", async () => {
-    glApiMock.mockResolvedValueOnce({ approved_by: [{ username: "alice" }] });
+  it("approve POSTs to /approve after confirming the user has not approved", async () => {
+    glApiMock.mockResolvedValueOnce({ username: "alice" }); // GET /user
+    glApiMock.mockResolvedValueOnce({ approved_by: [] }); // GET /approvals
+    glApiMock.mockResolvedValueOnce({
+      approved_by: [{ user: { username: "alice" } }],
+    }); // POST /approve
     const out = await mrCommand(["approve", "42"], ctx);
-    expect(glApiMock.mock.calls[0][0]).toContain("/approve");
+    const postCall = glApiMock.mock.calls.find(
+      (c) => c[1]?.method === "POST" && String(c[0]).endsWith("/approve"),
+    );
+    expect(postCall).toBeTruthy();
     expect(out).toContain("approved");
+  });
+
+  it("approve is a no-op when the current user has already approved", async () => {
+    glApiMock.mockResolvedValueOnce({ username: "alice" }); // GET /user
+    glApiMock.mockResolvedValueOnce({
+      approved_by: [{ user: { username: "alice" } }],
+    }); // GET /approvals
+    const out = await mrCommand(["approve", "42"], ctx);
+    expect(out).toContain("already: true");
+    // Only the two GETs — no approve POST.
+    expect(glApiMock.mock.calls.length).toBe(2);
+    expect(glApiMock.mock.calls.some((c) => c[1]?.method === "POST")).toBe(
+      false,
+    );
   });
 
   it("comment requires a body", async () => {

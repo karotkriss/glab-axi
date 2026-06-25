@@ -60,9 +60,10 @@ async function labelList(args: string[], ctx?: RepoContext): Promise<string> {
   const params = new URLSearchParams();
   params.set("per_page", String(limit));
 
-  const items = await glApi<Json[]>(`${labelsPath(ctx)}?${params.toString()}`, {
-    ctx,
-  });
+  const items =
+    (await glApi<Json[]>(`${labelsPath(ctx)}?${params.toString()}`, {
+      ctx,
+    })) ?? [];
   const isEmpty = items.length === 0;
 
   if (isEmpty) {

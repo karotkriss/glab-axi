@@ -11,6 +11,27 @@ import { cleanBody } from "../body.js";
 
 const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"];
 
+/** Flags that consume a following value token (when not in --flag=value form). */
+const VALUE_FLAGS = new Set(["--field", "--raw-field", "--header"]);
+
+/**
+ * Derive the positional args (method/path), skipping flags and the value tokens
+ * they consume. Without this, a flag value like `state=opened` (from
+ * `--field state=opened`) survives as a non-`-` token and is misread as the path.
+ */
+function extractPositionals(args: string[]): string[] {
+  const positionals: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg.startsWith("-")) {
+      if (VALUE_FLAGS.has(arg)) i++;
+      continue;
+    }
+    positionals.push(arg);
+  }
+  return positionals;
+}
+
 /** GitLab-noisy keys that bloat output without helping an agent reason. */
 const NOISY = new Set([
   "avatar_url",
@@ -128,7 +149,7 @@ export async function apiCommand(
   const rawFields = getAllFlags(args, "--raw-field");
   const headers = getAllFlags(args, "--header");
 
-  const positionals = args.filter((a) => !a.startsWith("-"));
+  const positionals = extractPositionals(args);
   if (positionals.length === 0) {
     throw new AxiError(
       "API path is required: glab-axi api [<method>] <path>",
