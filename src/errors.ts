@@ -10,7 +10,7 @@ export { AxiError, exitCodeForError };
 export function scrubTool(message: string): string {
   return message
     .replace(/^glab:\s*/i, "")
-    .replace(/\bglab\b/gi, "the CLI")
+    .replace(/\bglab\b(?!-axi)/gi, "the CLI")
     .trim();
 }
 

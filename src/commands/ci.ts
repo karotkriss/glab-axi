@@ -164,10 +164,11 @@ async function ciList(args: string[], ctx?: RepoContext): Promise<string> {
   if (ref) params.set("ref", ref);
   if (status) params.set("status", status);
 
-  const items = await glApi<Json[]>(
-    `projects/${requireProject(ctx)}/pipelines?${params.toString()}`,
-    { ctx },
-  );
+  const items =
+    (await glApi<Json[]>(
+      `projects/${requireProject(ctx)}/pipelines?${params.toString()}`,
+      { ctx },
+    )) ?? [];
   const isEmpty = items.length === 0;
   if (isEmpty) {
     return renderOutput([

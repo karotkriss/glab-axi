@@ -80,7 +80,8 @@ async function projectList(args: string[], ctx?: RepoContext): Promise<string> {
   params.set("order_by", "last_activity_at");
   if (search) params.set("search", search);
 
-  const items = await glApi<Json[]>(`projects?${params.toString()}`, { ctx });
+  const items =
+    (await glApi<Json[]>(`projects?${params.toString()}`, { ctx })) ?? [];
   const isEmpty = items.length === 0;
 
   if (isEmpty) {

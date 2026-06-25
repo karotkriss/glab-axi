@@ -159,10 +159,11 @@ async function issueList(args: string[], ctx?: RepoContext): Promise<string> {
   params.set("per_page", String(limit));
   params.set("order_by", "updated_at");
 
-  const items = await glApi<Json[]>(
-    `projects/${requireProject(ctx)}/issues?${params.toString()}`,
-    { ctx },
-  );
+  const items =
+    (await glApi<Json[]>(
+      `projects/${requireProject(ctx)}/issues?${params.toString()}`,
+      { ctx },
+    )) ?? [];
   const isEmpty = items.length === 0;
   const countLine = formatCountLine({ count: items.length, limit });
   const schema =
@@ -269,12 +270,12 @@ async function issueCreate(args: string[], ctx?: RepoContext): Promise<string> {
 }
 
 async function issueEdit(args: string[], ctx?: RepoContext): Promise<string> {
-  const iid = takeNumber(args, "issue");
   const title = takeFlag(args, "--title");
   const body = takeBody(args);
   const label = takeFlag(args, "--label");
   const milestone = takeFlag(args, "--milestone");
   const assignee = takeFlag(args, "--assignee");
+  const iid = takeNumber(args, "issue");
 
   const rawFields: string[] = [];
   const fields: string[] = [];
@@ -388,8 +389,8 @@ async function issueComment(
   args: string[],
   ctx?: RepoContext,
 ): Promise<string> {
-  const iid = takeNumber(args, "issue");
   const body = takeBody(args, { required: true });
+  const iid = takeNumber(args, "issue");
   await glApi<Json>(issuePath(ctx, iid, "/notes"), {
     method: "POST",
     rawFields: [`body=${body}`],

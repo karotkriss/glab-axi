@@ -100,10 +100,10 @@ async function releaseList(args: string[], ctx?: RepoContext): Promise<string> {
   const params = new URLSearchParams();
   params.set("per_page", String(limit));
 
-  const items = await glApi<Json[]>(
-    `${releasesPath(ctx)}?${params.toString()}`,
-    { ctx },
-  );
+  const items =
+    (await glApi<Json[]>(`${releasesPath(ctx)}?${params.toString()}`, {
+      ctx,
+    })) ?? [];
   const isEmpty = items.length === 0;
   const countLine = formatCountLine({ count: items.length, limit });
 
