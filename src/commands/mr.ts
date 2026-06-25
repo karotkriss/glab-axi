@@ -105,7 +105,7 @@ const LIST_EXTRA_FIELDS: Record<string, FieldSpec> = {
   },
 };
 
-function viewSchema(full: boolean): FieldDef[] {
+function viewSchema(full: boolean, includeComments: boolean): FieldDef[] {
   const base: FieldDef[] = [
     field("iid"),
     field("title"),
@@ -120,20 +120,27 @@ function viewSchema(full: boolean): FieldDef[] {
     base.push(
       custom("has_conflicts", (m) => (m.has_conflicts ? "yes" : "no")),
       custom("pipeline", (m) => m.head_pipeline?.status ?? "none"),
-      custom("comments", (m) => m.user_notes_count ?? 0),
+    );
+    // Count hint only when --comments isn't expanding the full notes.
+    if (!includeComments) {
+      base.push(custom("comments", (m) => m.user_notes_count ?? 0));
+    }
+    base.push(
       custom("web_url", (m) => m.web_url ?? ""),
       custom("body", (m) =>
         typeof m.description === "string" ? m.description : "",
       ),
     );
   } else {
-    base.push(
-      custom(
-        "comments",
-        (m) => `${m.user_notes_count ?? 0} — use --comments to read them`,
-      ),
-      custom("body", (m) => truncateBody(m.description, 500)),
-    );
+    if (!includeComments) {
+      base.push(
+        custom(
+          "comments",
+          (m) => `${m.user_notes_count ?? 0} — use --comments to read them`,
+        ),
+      );
+    }
+    base.push(custom("body", (m) => truncateBody(m.description, 500)));
   }
   return base;
 }
@@ -228,7 +235,7 @@ async function mrView(args: string[], ctx?: RepoContext): Promise<string> {
   const iid = takeNumber(args, "merge request");
   const mr = await glApi<Json>(mrPath(ctx, iid), { ctx });
 
-  const schema = viewSchema(full);
+  const schema = viewSchema(full, includeComments);
   if (includeComments) {
     const notes = await glApi<Json[]>(
       `${mrPath(ctx, iid, "/notes")}?per_page=100&sort=asc`,
@@ -337,24 +344,62 @@ async function mrUpdate(args: string[], ctx?: RepoContext): Promise<string> {
   const reopen = takeBoolFlag(args, "--reopen");
   const iid = takeNumber(args, "merge request");
 
+  // Reject contradictory transitions before touching the API.
+  if (close && reopen) {
+    throw new AxiError(
+      "Choose only one of --close or --reopen",
+      "VALIDATION_ERROR",
+    );
+  }
+  if (ready && draft) {
+    throw new AxiError(
+      "Choose only one of --ready or --draft",
+      "VALIDATION_ERROR",
+    );
+  }
+
+  const anyFlag =
+    title !== undefined ||
+    body !== undefined ||
+    label !== undefined ||
+    milestone !== undefined ||
+    assignee !== undefined ||
+    targetBranch !== undefined ||
+    ready ||
+    draft ||
+    close ||
+    reopen;
+  if (!anyFlag) {
+    throw new AxiError("No update flags provided", "VALIDATION_ERROR", [
+      "Pass at least one of --title, --body, --label, --assignee, --milestone, --target-branch, --ready, --draft, --close, --reopen",
+    ]);
+  }
+
+  // Fetch current state once — used both for idempotency (skipping transitions
+  // already satisfied) and for the draft/ready re-title logic.
+  const current = await glApi<Json>(mrPath(ctx, iid), { ctx });
+  const curState = current.state;
+  const curDraft = current.draft === true;
+
   const rawFields: string[] = [];
   const fields: string[] = [];
-  if (title)
+  if (title !== undefined)
     rawFields.push(
       `title=${draft && !DRAFT_PREFIX.test(title) ? `Draft: ${title}` : title}`,
     );
   if (body !== undefined) rawFields.push(`description=${body}`);
-  if (label) rawFields.push(`labels=${label}`);
-  if (targetBranch) rawFields.push(`target_branch=${targetBranch}`);
-  if (milestone)
+  if (label !== undefined) rawFields.push(`labels=${label}`);
+  if (targetBranch !== undefined)
+    rawFields.push(`target_branch=${targetBranch}`);
+  if (milestone !== undefined)
     fields.push(`milestone_id=${await resolveMilestoneId(milestone, ctx)}`);
-  if (assignee)
+  if (assignee !== undefined)
     fields.push(`assignee_id=${await resolveUserId(assignee, ctx)}`);
-  if (close) fields.push("state_event=close");
-  if (reopen) fields.push("state_event=reopen");
-  if (draft && !title) {
-    // Mark as draft by re-titling the current title.
-    const current = await glApi<Json>(mrPath(ctx, iid), { ctx });
+  // Idempotent: only request a state transition the MR isn't already in.
+  if (close && curState !== "closed") fields.push("state_event=close");
+  if (reopen && curState !== "opened") fields.push("state_event=reopen");
+  // --draft (without an explicit title): re-title current to Draft, if needed.
+  if (draft && title === undefined && !curDraft) {
     const t = current.title ?? "";
     if (!DRAFT_PREFIX.test(t)) rawFields.push(`title=Draft: ${t}`);
   }
@@ -370,23 +415,36 @@ async function mrUpdate(args: string[], ctx?: RepoContext): Promise<string> {
   }
 
   // --ready: clear the Draft prefix in a final PUT and render that response
-  // (not the stale pre-update state).
+  // (not the stale pre-update state). Skip entirely if already non-draft.
   if (ready) {
-    const currentTitle =
-      result?.title ??
-      (await glApi<Json>(mrPath(ctx, iid), { ctx })).title ??
-      "";
-    const cleaned = stripDraft(currentTitle);
-    result = await glApi<Json>(mrPath(ctx, iid), {
-      method: "PUT",
-      rawFields: [`title=${cleaned}`],
-      ctx,
-    });
+    const latestTitle = result?.title ?? current.title ?? "";
+    const cleaned = stripDraft(latestTitle);
+    const draftNow = (result?.draft ?? curDraft) === true;
+    if (draftNow || cleaned !== latestTitle) {
+      result = await glApi<Json>(mrPath(ctx, iid), {
+        method: "PUT",
+        rawFields: [`title=${cleaned}`],
+        ctx,
+      });
+    }
   }
 
+  // Nothing actually needed changing → idempotent no-op (exit 0).
   if (!result) {
-    throw new AxiError("No update flags provided", "VALIDATION_ERROR", [
-      "Pass at least one of --title, --body, --label, --assignee, --ready, --draft, --close, --reopen",
+    return renderOutput([
+      renderDetail(
+        "merge_request",
+        {
+          iid,
+          state: curState,
+          draft: curDraft ? "yes" : "no",
+          already: true,
+        },
+        [field("iid"), lower("state"), field("draft"), field("already")],
+      ),
+      renderHelp(
+        getSuggestions({ domain: "mr", action: "update", id: iid, repo: ctx }),
+      ),
     ]);
   }
   return renderOutput([

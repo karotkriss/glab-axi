@@ -41,6 +41,9 @@ function classifyJob(job: Json): Bucket {
     case "running":
     case "pending":
     case "created":
+    case "preparing":
+    case "waiting_for_resource":
+    case "scheduled":
       return "running";
     case "manual":
     case "skipped":

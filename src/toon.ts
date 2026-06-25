@@ -170,6 +170,10 @@ export function formatRelativeTime(iso: Json): string {
   if (isNaN(then)) return "unknown";
   const MS_PER_SECOND = 1000;
   const diffMs = now - then;
+  // Future timestamps (e.g. a scheduled date or minor clock skew) would
+  // otherwise fall through the `< 60` checks as "just now" implicitly; handle
+  // them explicitly so we never render a negative "ago".
+  if (diffMs < 0) return "just now";
   const diffSec = Math.floor(diffMs / MS_PER_SECOND);
   if (diffSec < 60) return "just now";
   const diffMin = Math.floor(diffSec / 60);

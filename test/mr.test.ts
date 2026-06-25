@@ -234,26 +234,54 @@ describe("mr update", () => {
   });
 
   it("--close sets state_event=close", async () => {
-    glApiMock.mockResolvedValueOnce(mr({ state: "closed" }));
+    glApiMock.mockResolvedValueOnce(mr({ state: "opened" })); // GET current
+    glApiMock.mockResolvedValueOnce(mr({ state: "closed" })); // PUT
     await mrCommand(["update", "42", "--close"], ctx);
-    expect(glApiMock.mock.calls[0][1].fields).toContain("state_event=close");
+    expect(glApiMock.mock.calls[1][1].fields).toContain("state_event=close");
+  });
+
+  it("is idempotent: --close on an already-closed MR is a no-op", async () => {
+    glApiMock.mockResolvedValueOnce(mr({ state: "closed" })); // GET current
+    const out = await mrCommand(["update", "42", "--close"], ctx);
+    // Only the GET — no PUT, no state_event re-issued.
+    expect(glApiMock.mock.calls.length).toBe(1);
+    expect(out).toContain("already: true");
+  });
+
+  it("is idempotent: --reopen on an already-open MR is a no-op", async () => {
+    glApiMock.mockResolvedValueOnce(mr({ state: "opened" })); // GET current
+    const out = await mrCommand(["update", "42", "--reopen"], ctx);
+    expect(glApiMock.mock.calls.length).toBe(1);
+    expect(out).toContain("already: true");
+  });
+
+  it("rejects contradictory --close and --reopen", async () => {
+    await expect(
+      mrCommand(["update", "42", "--close", "--reopen"], ctx),
+    ).rejects.toThrow("only one of --close or --reopen");
+  });
+
+  it("rejects contradictory --ready and --draft", async () => {
+    await expect(
+      mrCommand(["update", "42", "--ready", "--draft"], ctx),
+    ).rejects.toThrow("only one of --ready or --draft");
   });
 
   it("applies the Draft prefix to a provided --title when --draft is set", async () => {
-    glApiMock.mockResolvedValueOnce(mr({ title: "Draft: New", draft: true }));
+    glApiMock.mockResolvedValueOnce(mr({ title: "New", draft: false })); // GET current
+    glApiMock.mockResolvedValueOnce(mr({ title: "Draft: New", draft: true })); // PUT
     await mrCommand(["update", "42", "--title", "New", "--draft"], ctx);
-    // Single PUT — no extra GET to fetch the current title.
-    expect(glApiMock.mock.calls.length).toBe(1);
-    expect(glApiMock.mock.calls[0][1].rawFields).toContain("title=Draft: New");
+    expect(glApiMock.mock.calls[1][1].rawFields).toContain("title=Draft: New");
   });
 
   it("takes the iid even when a numeric flag value precedes it", async () => {
-    glApiMock.mockResolvedValueOnce(mr({ iid: 42, title: "5" }));
+    glApiMock.mockResolvedValueOnce(mr({ iid: 42, title: "old" })); // GET current
+    glApiMock.mockResolvedValueOnce(mr({ iid: 42, title: "5" })); // PUT
     await mrCommand(["update", "--title", "5", "42"], ctx);
     expect(glApiMock.mock.calls[0][0]).toBe(
       `projects/${PID}/merge_requests/42`,
     );
-    expect(glApiMock.mock.calls[0][1].rawFields).toContain("title=5");
+    expect(glApiMock.mock.calls[1][1].rawFields).toContain("title=5");
   });
 });
 

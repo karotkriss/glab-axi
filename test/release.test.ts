@@ -17,6 +17,7 @@ vi.mock("../src/gl.js", () => {
 
 import { releaseCommand, RELEASE_HELP } from "../src/commands/release.js";
 import { glApi, glApiResult } from "../src/gl.js";
+import { AxiError } from "../src/errors.js";
 import type { RepoContext } from "../src/context.js";
 
 const glApiMock = glApi as unknown as ReturnType<typeof vi.fn>;
@@ -145,6 +146,14 @@ describe("release create", () => {
     glApiMock.mockResolvedValueOnce(release());
     await releaseCommand(["create", "v2.0.0", "--ref", "main"], ctx);
     expect(glApiMock.mock.calls[0][1].rawFields).toContain("ref=main");
+  });
+
+  it("is idempotent: an existing tag (409) becomes a no-op", async () => {
+    glApiMock.mockRejectedValueOnce(
+      new AxiError("Release already exists", "CONFLICT"),
+    );
+    const out = await releaseCommand(["create", "v1.0.0"], ctx);
+    expect(out).toContain("already: true");
   });
 });
 

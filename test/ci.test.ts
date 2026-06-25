@@ -129,6 +129,18 @@ describe("ci bucketing / summary + verdict", () => {
     expect(out).toContain("verdict: failing");
   });
 
+  it("counts GitLab's other in-progress statuses (preparing/scheduled/waiting_for_resource) as running", async () => {
+    glApiMock.mockResolvedValueOnce([
+      job({ id: 1, status: "success" }),
+      job({ id: 2, status: "preparing" }),
+      job({ id: 3, status: "waiting_for_resource" }),
+      job({ id: 4, status: "scheduled" }),
+    ]);
+    const out = await ciCommand(["jobs", "12345"], ctx);
+    expect(out).toContain("checks: 1 passed, 0 failed, 3 running");
+    expect(out).toContain("verdict: running");
+  });
+
   it("verdict is passing when only passes (incl. allowed failures) and neutrals", async () => {
     glApiMock.mockResolvedValueOnce([
       job({ id: 1, status: "success" }),

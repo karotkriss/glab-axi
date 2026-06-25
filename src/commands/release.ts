@@ -157,26 +157,51 @@ async function releaseCreate(
   if (body !== undefined) rawFields.push(`description=${body}`);
   if (ref) rawFields.push(`ref=${ref}`);
 
-  const release = await glApi<Json>(releasesPath(ctx), {
-    method: "POST",
-    rawFields,
-    ctx,
-  });
-  return renderOutput([
-    renderDetail(
-      "created",
-      { tag: release.tag_name ?? tag, name: release.name ?? name ?? null },
-      [field("tag"), field("name")],
-    ),
-    renderHelp(
-      getSuggestions({
-        domain: "release",
-        action: "create",
-        id: tag,
-        repo: ctx,
-      }),
-    ),
-  ]);
+  try {
+    const release = await glApi<Json>(releasesPath(ctx), {
+      method: "POST",
+      rawFields,
+      ctx,
+    });
+    return renderOutput([
+      renderDetail(
+        "created",
+        { tag: release.tag_name ?? tag, name: release.name ?? name ?? null },
+        [field("tag"), field("name")],
+      ),
+      renderHelp(
+        getSuggestions({
+          domain: "release",
+          action: "create",
+          id: tag,
+          repo: ctx,
+        }),
+      ),
+    ]);
+  } catch (err) {
+    // Idempotent: GitLab returns a 409 ("Release already exists") when a
+    // release for this tag is already present. Treat it as a no-op.
+    if (
+      err instanceof AxiError &&
+      (err.code === "CONFLICT" || /already exists/i.test(err.message))
+    ) {
+      return renderOutput([
+        renderDetail("release", { tag, already: true }, [
+          field("tag"),
+          field("already"),
+        ]),
+        renderHelp(
+          getSuggestions({
+            domain: "release",
+            action: "create",
+            id: tag,
+            repo: ctx,
+          }),
+        ),
+      ]);
+    }
+    throw err;
+  }
 }
 
 async function releaseDelete(
