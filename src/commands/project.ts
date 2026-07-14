@@ -337,7 +337,11 @@ async function projectDelete(
   args: string[],
   ctx?: RepoContext,
 ): Promise<string> {
-  const confirmed = takeBoolFlag(args, "--yes") || takeBoolFlag(args, "-y");
+  // Consume both aliases unconditionally (not `||`, which short-circuits and
+  // leaves the other flag in args to be misread as the target positional).
+  const confirmedYes = takeBoolFlag(args, "--yes");
+  const confirmedY = takeBoolFlag(args, "-y");
+  const confirmed = confirmedYes || confirmedY;
   const raw = getPositional(args, 0);
   if (!raw) {
     throw new AxiError("Missing project", "VALIDATION_ERROR", [

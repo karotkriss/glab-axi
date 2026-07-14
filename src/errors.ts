@@ -117,3 +117,13 @@ export function glNotInstalledError(): AxiError {
     "CLI_NOT_INSTALLED",
   );
 }
+
+export function argumentTooLargeError(): AxiError {
+  return new AxiError(
+    "Content or value is too large to pass as a command-line argument",
+    "VALIDATION_ERROR",
+    [
+      "The OS limits how much text a single argument can hold (commonly ~128KB) - reduce the size of the content or value being sent",
+    ],
+  );
+}

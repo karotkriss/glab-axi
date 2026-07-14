@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import {
+  argumentTooLargeError,
   AxiError,
   glNotInstalledError,
   mapGlError,
@@ -95,6 +96,14 @@ function run(args: string[], ctx?: RepoContext): Promise<ExecResult> {
           resolve({ stdout: "", stderr: "ENOENT", exitCode: 127 });
           return;
         }
+        // The process never spawned (argument list too long, e.g. a large
+        // --content/--value passed via `-f`), the same class of failure as
+        // ENOENT - map it the same way rather than letting an opaque E2BIG
+        // reach the caller as an "UNKNOWN" error.
+        if (err && err.code === "E2BIG") {
+          resolve({ stdout: "", stderr: "E2BIG", exitCode: 127 });
+          return;
+        }
         const exitCode = err
           ? typeof err.code === "number"
             ? err.code
@@ -117,6 +126,7 @@ export async function glApi<T = Json>(
 ): Promise<T> {
   const result = await run(buildApiArgs(path, opts), opts.ctx);
   if (result.stderr === "ENOENT") throw glNotInstalledError();
+  if (result.stderr === "E2BIG") throw argumentTooLargeError();
   if (result.exitCode !== 0)
     throw mapGlError(errorBody(result), result.exitCode);
   const out = result.stdout.trim();
@@ -138,6 +148,7 @@ export async function glRaw(
 ): Promise<string> {
   const result = await run(buildApiArgs(path, opts), opts.ctx);
   if (result.stderr === "ENOENT") throw glNotInstalledError();
+  if (result.stderr === "E2BIG") throw argumentTooLargeError();
   if (result.exitCode !== 0)
     throw mapGlError(errorBody(result), result.exitCode);
   return result.stdout;
@@ -150,6 +161,7 @@ export async function glApiResult(
 ): Promise<ExecResult> {
   const result = await run(buildApiArgs(path, opts), opts.ctx);
   if (result.stderr === "ENOENT") throw glNotInstalledError();
+  if (result.stderr === "E2BIG") throw argumentTooLargeError();
   return result;
 }
 

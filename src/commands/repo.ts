@@ -26,10 +26,17 @@ const CONTENT_SUGGESTIONS = [
   'Pass --content "<text>" or --content-file <path>, or pipe it: `cat ci.yml | glab-axi repo create-file .gitlab-ci.yml`',
 ];
 
+// create-file writes UTF-8 text only; GitLab's encoding=base64 (binary) upload
+// is a deliberate future addition, not implemented here.
+const BINARY_CONTENT_ERROR =
+  "Binary content is not supported - repo create-file writes text files only";
+
 /**
  * Resolve the file content: --content, --content-file, or piped stdin.
  * Unlike `variable set`, a trailing newline is preserved - it is part of the
- * file being written, not shell noise.
+ * file being written, not shell noise. --content-file and piped content are
+ * validated as UTF-8 text before use: a naive lossy decode would silently
+ * corrupt binary input (e.g. an image) with no error.
  */
 function resolveContent(args: string[]): string {
   const body = takeBody(args, {
@@ -37,9 +44,13 @@ function resolveContent(args: string[]): string {
     fileFlags: ["--content-file"],
     label: "content",
     suggestions: CONTENT_SUGGESTIONS,
+    rejectBinaryMessage: BINARY_CONTENT_ERROR,
   });
   if (body !== undefined) return body;
-  const piped = readStdin();
+  const piped = readStdin({
+    rejectBinaryMessage: BINARY_CONTENT_ERROR,
+    suggestions: CONTENT_SUGGESTIONS,
+  });
   if (piped === "") {
     throw new AxiError(
       "File content is required",
@@ -85,6 +96,7 @@ flags{create-branch}:
 notes:
   repo writes the project's git contents (files, branches); \`project\` addresses the project itself. Both subcommands are idempotent: an existing file or branch is a no-op (already: true), never an overwrite - to change a file's content, commit it under a new path or branch.
   create-file commits directly to --branch, and creates that branch when the repository is still empty (the one case where --branch cannot be defaulted).
+  create-file writes UTF-8 text only - binary content (images, compiled assets) is rejected with an actionable error rather than silently corrupted. Base64/binary upload support is a possible future addition, not implemented here.
 examples:
   glab-axi repo create-file README.md --content "# my-service"
   glab-axi repo create-file .gitlab-ci.yml --content-file ci.yml --message "Add CI config"
