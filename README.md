@@ -63,6 +63,8 @@ Every response ends with `help:` hints for logical next steps. Run `glab-axi --h
 | `ci`      | list / view / status / jobs / watch / log / retry (pipelines; `watch` blocks until a pipeline finishes and exits non-zero if it did not succeed) |
 | `project` | view / list |
 | `label`   | list / create / delete |
+| `variable`| list / get / set / delete (plain, unmasked CI/CD variables) |
+| `secret`  | list / set / delete (masked & protected CI/CD variables; `list` never reveals values) |
 | `release` | list / view / create / delete |
 | `search`  | issues / mrs / projects |
 | `api`     | raw GitLab REST passthrough with a `{project}` placeholder |
