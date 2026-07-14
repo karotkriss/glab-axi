@@ -144,6 +144,60 @@ describe("issue view", () => {
   });
 });
 
+describe("issue links", () => {
+  function link(overrides: Record<string, unknown> = {}) {
+    return {
+      iid: 7,
+      title: "Blocking issue",
+      state: "opened",
+      link_type: "blocks",
+      issue_link_id: 100,
+      ...overrides,
+    };
+  }
+
+  it("fetches the /links endpoint and renders relation/iid/title/state", async () => {
+    glApiMock.mockResolvedValueOnce([
+      link(),
+      link({
+        iid: 8,
+        title: "Related",
+        state: "closed",
+        link_type: "relates_to",
+      }),
+      link({ iid: 9, title: "Blocked", link_type: "is_blocked_by" }),
+    ]);
+    const out = await issueCommand(["links", "42"], ctx);
+    expect(glApiMock.mock.calls[0][0]).toBe(
+      `projects/${PID}/issues/42/links?per_page=30`,
+    );
+    expect(out).toContain("count: 3");
+    expect(out).toContain("linked_issues[3]");
+    // link_type mapped to human-readable relations
+    expect(out).toContain("blocks");
+    expect(out).toContain("relates to");
+    expect(out).toContain("is blocked by");
+    // state lowercased, titles present
+    expect(out).toContain("closed");
+    expect(out).toContain("Related");
+  });
+
+  it("gives a definitive empty state with no linked issues", async () => {
+    glApiMock.mockResolvedValueOnce([]);
+    const out = await issueCommand(["links", "42"], ctx);
+    expect(out).toContain("no linked issues found for issue 42");
+    expect(out).not.toContain("linked_issues[");
+  });
+
+  it("bounds the request with --limit (consumed before the iid)", async () => {
+    glApiMock.mockResolvedValueOnce([]);
+    await issueCommand(["links", "42", "--limit", "5"], ctx);
+    expect(glApiMock.mock.calls[0][0]).toBe(
+      `projects/${PID}/issues/42/links?per_page=5`,
+    );
+  });
+});
+
 describe("issue create", () => {
   it("requires --title", async () => {
     await expect(issueCommand(["create", "--body", "x"], ctx)).rejects.toThrow(

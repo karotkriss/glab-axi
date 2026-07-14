@@ -68,6 +68,13 @@ const table: Entry[] = [
     ],
   },
   {
+    match: (c) => c.domain === "issue" && c.action === "links",
+    lines: (c) => [
+      `Run \`glab-axi${repoFlag(c)} issue view <iid>\` to view a linked issue`,
+      `Run \`glab-axi${repoFlag(c)} issue view ${c.id}\` to see the source issue`,
+    ],
+  },
+  {
     match: (c) => c.domain === "issue" && c.action === "create",
     lines: (c) => [
       `Run \`glab-axi${repoFlag(c)} issue view ${c.id}\` to see the full issue`,
