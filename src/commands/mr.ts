@@ -3,6 +3,7 @@ import {
   glApiResult,
   projectId,
   requireProject,
+  errorBody,
   type Json,
 } from "../gl.js";
 import { AxiError, mapGlError } from "../errors.js";
@@ -90,7 +91,7 @@ async function machineOutput(
 ): Promise<string> {
   const result = await glApiResult(path, { ctx });
   if (result.exitCode !== 0) {
-    throw mapGlError(result.stderr || result.stdout, result.exitCode);
+    throw mapGlError(errorBody(result), result.exitCode);
   }
   return renderMachine(result.stdout, flags);
 }

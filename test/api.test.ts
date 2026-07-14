@@ -13,6 +13,8 @@ vi.mock("../src/gl.js", () => {
       if (!ctx) throw new Error("no project");
       return encodeURIComponent(ctx.project);
     },
+    errorBody: (result: { stderr: string; stdout: string }) =>
+      [result.stderr, result.stdout].filter(Boolean).join("\n"),
   };
 });
 
