@@ -141,11 +141,13 @@ function countDiffLines(diff: unknown): {
 function fileDiff(c: Json): string {
   const oldp = c.old_path ?? c.new_path ?? "";
   const newp = c.new_path ?? c.old_path ?? "";
-  const header = `diff --git a/${oldp} b/${newp}`;
-  const minus = c.new_file ? "--- /dev/null" : `--- a/${oldp}`;
-  const plus = c.deleted_file ? "+++ /dev/null" : `+++ b/${newp}`;
+  const lines = [`diff --git a/${oldp} b/${newp}`];
+  if (c.new_file) lines.push(`new file mode ${c.b_mode ?? "100644"}`);
+  if (c.deleted_file) lines.push(`deleted file mode ${c.a_mode ?? "100644"}`);
+  lines.push(c.new_file ? "--- /dev/null" : `--- a/${oldp}`);
+  lines.push(c.deleted_file ? "+++ /dev/null" : `+++ b/${newp}`);
   const body = typeof c.diff === "string" ? c.diff : "";
-  return `${header}\n${minus}\n${plus}\n${body}`;
+  return `${lines.join("\n")}\n${body}`;
 }
 
 // ---------------------------------------------------------------------------
