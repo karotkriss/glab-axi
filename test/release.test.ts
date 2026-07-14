@@ -217,6 +217,20 @@ describe("release create", () => {
     expect(out).toContain("assets: 2");
   });
 
+  it("resolves the tag correctly when --asset precedes it", async () => {
+    glApiMock.mockResolvedValueOnce(release());
+    const out = await releaseCommand(
+      ["create", "--asset", "https://host/dl/app.zip", "v1.0.0"],
+      ctx,
+    );
+    const call = glApiMock.mock.calls[0];
+    expect(call[1].rawFields).toContain("tag_name=v1.0.0");
+    expect(call[1].rawFields).not.toContain("tag_name=https://host/dl/app.zip");
+    const rawFields = call[1].rawFields as string[];
+    expect(rawFields).toContain("assets[links][][url]=https://host/dl/app.zip");
+    expect(out).toContain("tag: v1.0.0");
+  });
+
   it("rejects an --asset with no URL", async () => {
     await expect(
       releaseCommand(["create", "v2.0.0", "--asset", "#just a name"], ctx),

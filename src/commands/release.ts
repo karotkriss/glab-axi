@@ -7,7 +7,7 @@ import { getSuggestions } from "../suggestions.js";
 import {
   takeFlag,
   takeBoolFlag,
-  getAllFlags,
+  takeAllFlags,
   getPositional,
   parseLimit,
 } from "../args.js";
@@ -214,7 +214,7 @@ async function releaseCreate(
   const refFlag = takeFlag(args, "--ref");
   const ref = target ?? refFlag;
   const prerelease = takeBoolFlag(args, "--prerelease");
-  const assets = getAllFlags(args, "--asset").map(parseAsset);
+  const assets = takeAllFlags(args, "--asset").map(parseAsset);
   const tag = requireTag(args);
 
   const rawFields = [`tag_name=${tag}`];
