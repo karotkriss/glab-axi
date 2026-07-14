@@ -327,6 +327,44 @@ describe("project delete", () => {
     expect(out).toContain("status: ok");
   });
 
+  it("accepts both --yes and -y together without misreading -y as the target", async () => {
+    glApiResultMock.mockResolvedValueOnce({
+      stdout: JSON.stringify(project()),
+      stderr: "",
+      exitCode: 0,
+    });
+    glApiResultMock.mockResolvedValueOnce({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+    });
+    const out = await projectCommand(
+      ["delete", "--yes", "-y", "my-group/svc"],
+      ctx,
+    );
+    expect(out).toContain("status: ok");
+    expect(out).toContain("project: my-group/svc");
+  });
+
+  it("accepts -y before --yes in the same call", async () => {
+    glApiResultMock.mockResolvedValueOnce({
+      stdout: JSON.stringify(project()),
+      stderr: "",
+      exitCode: 0,
+    });
+    glApiResultMock.mockResolvedValueOnce({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+    });
+    const out = await projectCommand(
+      ["delete", "-y", "--yes", "my-group/svc"],
+      ctx,
+    );
+    expect(out).toContain("status: ok");
+    expect(out).toContain("project: my-group/svc");
+  });
+
   it("addresses a numeric id directly, unencoded", async () => {
     glApiResultMock.mockResolvedValueOnce({
       stdout: JSON.stringify(project()),

@@ -1,4 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 // Mock the gl executor so no real glab/network is touched.
 vi.mock("../src/gl.js", () => {
@@ -197,6 +200,79 @@ describe("repo create-file", () => {
     await expect(
       repoCommand(["create-file", "README.md", "--content", "# hi"]),
     ).rejects.toThrow("Could not determine the target GitLab project");
+  });
+
+  it("passes binary-rejection options through to readStdin", async () => {
+    readStdinMock.mockReturnValue("piped body\n");
+    glApiResultMock.mockResolvedValueOnce(NOT_FOUND);
+    glApiMock.mockResolvedValueOnce({ file_path: "a.txt", branch: "feat" });
+
+    await repoCommand(["create-file", "a.txt", "--branch", "feat"], ctx);
+
+    expect(readStdinMock.mock.calls[0][0]).toMatchObject({
+      rejectBinaryMessage: expect.stringContaining(
+        "Binary content is not supported",
+      ),
+    });
+  });
+});
+
+describe("repo create-file binary content rejection", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "glab-axi-repo-test-"));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("rejects a --content-file containing invalid UTF-8 bytes", async () => {
+    const filePath = join(dir, "binary.dat");
+    writeFileSync(filePath, Buffer.from([0xff, 0xfe, 0x00, 0x01]));
+
+    await expect(
+      repoCommand(
+        [
+          "create-file",
+          "binary.dat",
+          "--branch",
+          "feat",
+          "--content-file",
+          filePath,
+        ],
+        ctx,
+      ),
+    ).rejects.toThrow("Binary content is not supported");
+    expect(glApiMock.mock.calls.length).toBe(0);
+  });
+
+  it("accepts a --content-file that legitimately contains a U+FFFD character", async () => {
+    const filePath = join(dir, "replacement-char.txt");
+    writeFileSync(filePath, Buffer.from("hello � world", "utf8"));
+    glApiResultMock.mockResolvedValueOnce(NOT_FOUND);
+    glApiMock.mockResolvedValueOnce({
+      file_path: "replacement-char.txt",
+      branch: "feat",
+    });
+
+    const out = await repoCommand(
+      [
+        "create-file",
+        "replacement-char.txt",
+        "--branch",
+        "feat",
+        "--content-file",
+        filePath,
+      ],
+      ctx,
+    );
+
+    expect(out).toContain("created");
+    expect(glApiMock.mock.calls[0][1].rawFields).toContain(
+      "content=hello � world",
+    );
   });
 });
 

@@ -115,6 +115,7 @@ glab-axi project delete my-group/my-service --yes
 Content comes from `--content`, `--content-file`, or piped stdin.
 `repo create-branch` branches from `--ref` (also defaulting to the default branch).
 Both are idempotent: an existing file or branch is a no-op (`already: true`), never an overwrite.
+`repo create-file` writes UTF-8 text only; binary content (images, compiled assets) is rejected with an actionable error rather than silently corrupted.
 
 `project delete` is destructive, so it takes its target as an explicit positional (a numeric project id, or a `[host/]group/project` path) rather than falling back to the resolved project, and it requires `--yes` - it never prompts.
 Deleting an already-absent project is a no-op (`already_absent: true`).

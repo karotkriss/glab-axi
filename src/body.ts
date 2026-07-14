@@ -8,6 +8,8 @@ interface TakeBodyOptions {
   label?: string;
   suggestions?: string[];
   required?: boolean;
+  /** When set, a file source that isn't valid UTF-8 text throws this message instead of being silently decoded lossily. */
+  rejectBinaryMessage?: string;
 }
 
 function defaultSuggestions(label: string): string[] {
@@ -71,9 +73,11 @@ function readBodyFile(
   flag: string,
   path: string,
   suggestions: string[],
+  rejectBinaryMessage?: string,
 ): string {
+  let raw: Buffer;
   try {
-    return readFileSync(path, "utf8");
+    raw = readFileSync(path);
   } catch (error) {
     const code =
       error && typeof error === "object" && "code" in error
@@ -98,6 +102,14 @@ function readBodyFile(
       "VALIDATION_ERROR",
       suggestions,
     );
+  }
+  if (!rejectBinaryMessage) return raw.toString("utf8");
+  // Validate the raw bytes before decoding: a lossy decode would already have
+  // substituted U+FFFD for invalid sequences, making binary undetectable.
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(raw);
+  } catch {
+    throw new AxiError(rejectBinaryMessage, "VALIDATION_ERROR", suggestions);
   }
 }
 
@@ -148,7 +160,12 @@ export function takeBody(
   }
   const resolvedValue = value ?? "";
   if (fileFlags.includes(match.flag)) {
-    return readBodyFile(match.flag, resolvedValue, suggestions);
+    return readBodyFile(
+      match.flag,
+      resolvedValue,
+      suggestions,
+      options.rejectBinaryMessage,
+    );
   }
   return resolvedValue;
 }
