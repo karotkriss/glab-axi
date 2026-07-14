@@ -26,15 +26,17 @@ Pick the new version `X.Y.Z` by semver against what is under `## [Unreleased]`
 in `CHANGELOG.md`. Run from a clean checkout of the default branch.
 
 1. **Update the CHANGELOG.** Rename `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`
-   (today's date), add a fresh empty `## [Unreleased]` above it, and fix the
-   reference links at the bottom of the file:
+   (today's date), add a fresh empty `## [Unreleased]` above it, and add the
+   reference links at the bottom of the file (create the block if the file
+   has none yet):
 
    ```
    [Unreleased]: https://github.com/karotkriss/glab-axi/compare/vX.Y.Z...HEAD
    [X.Y.Z]: https://github.com/karotkriss/glab-axi/releases/tag/vX.Y.Z
    ```
 
-   (Keep the older `[...]` link lines.) Drop any empty Added/Changed/Fixed
+   (If a reference-link block already exists from an earlier release, keep
+   its older `[...]` link lines.) Drop any empty Added/Changed/Fixed
    subheadings from the new section.
 
 2. **Bump the version** in `package.json` (this also updates `package-lock.json`):
