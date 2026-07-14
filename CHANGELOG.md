@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `issue links` - list an issue's linked issues over the Issue Links API.
 - `project create [namespace/]name` - create a project over the Projects API; org-owned creates resolve the namespace, and the create is idempotent (GET-first).
 - `project delete <id|[host/]group/project>` - delete a project over the Projects API. Names its target explicitly rather than falling back to the resolved project, requires `--yes`/`-y` (it never prompts), and is idempotent (an absent project is `already_absent`).
-- `repo` command - `create-file` and `create-branch`, writing a project's git contents over the Repository Files and Branches APIs. Content comes from `--content`, `--content-file`, or piped stdin; `--branch`/`--ref` default to the project's default branch; both subcommands are idempotent (an existing file or branch is a no-op).
+- `repo` command - `create-file` and `create-branch`, writing a project's git contents over the Repository Files and Branches APIs. Content comes from `--content`, `--content-file`, or piped stdin; `--branch`/`--ref` default to the project's default branch; both subcommands are idempotent (an existing file or branch is a no-op). `create-file` writes UTF-8 text only - binary content from `--content-file` or piped stdin is rejected with an actionable error instead of being silently corrupted.
 - `ci watch <pipeline-id>` - block until a pipeline reaches a terminal state, print the verdict aggregate, and exit non-zero unless the pipeline succeeded.
 - `mr checks <iid|url>` - merge-request pipeline verdict summary (reuses the CI aggregation).
 - `mr diff <iid|url>` - bounded per-file diff summary by default; full reconstructed unified diff with `--full`.
@@ -42,6 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `mr` / `api` `--json` error mapping combines stdout and stderr.
 - `release create --asset` no longer consumes the tag positional.
 - glab Go unmarshal errors map to `VALIDATION_ERROR`.
+- `project delete --yes -y` no longer leaves one alias unconsumed and misread as the project positional.
+- An over-large `--content`/`--value` (`repo create-file`, `variable set`, `secret set`, and any other command passing user text through `glab api`) now surfaces an actionable error naming the OS argument-size limit instead of an opaque failure.
 
 ## [0.1.0] - 2026-06-25
 
