@@ -97,6 +97,16 @@ glab-axi api POST projects/{project}/labels --raw-field name=urgent --raw-field 
 glab-axi api projects/{project}/pipelines --paginate
 ```
 
+By default `api` emits TOON with noisy fields stripped. To pull a single field or feed the response to your own tooling, use `--jq` or `--raw`, which both operate on the raw, unmodified JSON:
+
+```sh
+glab-axi api projects/{project}/merge_requests/5 --jq .state          # -> opened
+glab-axi api projects/{project}/merge_requests/5 --jq .sha             # head SHA
+glab-axi api projects/{project} --raw | jq .default_branch
+```
+
+`--jq <expr>` applies a jq expression (raw output, like `jq -r`) and needs the `jq` binary on `PATH`; `--raw` (alias `--json`) prints the JSON response verbatim and needs nothing. When both are passed, `--jq` wins.
+
 ## Ambient context for agents (two ways - pick one or both)
 
 These are complementary; you only need one.

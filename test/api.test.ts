@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// Mock the gl executor so no real glab/network is touched.
+// Mock the gl executor so no real glab/network/jq is touched.
 vi.mock("../src/gl.js", () => {
   return {
     glApi: vi.fn(),
     glRaw: vi.fn(),
     glApiResult: vi.fn(),
+    runJq: vi.fn(),
     projectId: (ctx?: { project: string }) =>
       ctx ? encodeURIComponent(ctx.project) : "{project}",
     requireProject: (ctx?: { project: string }) => {
@@ -16,10 +17,11 @@ vi.mock("../src/gl.js", () => {
 });
 
 import { apiCommand, API_HELP } from "../src/commands/api.js";
-import { glApiResult } from "../src/gl.js";
+import { glApiResult, runJq } from "../src/gl.js";
 import type { RepoContext } from "../src/context.js";
 
 const glApiResultMock = glApiResult as unknown as ReturnType<typeof vi.fn>;
+const runJqMock = runJq as unknown as ReturnType<typeof vi.fn>;
 const ctx: RepoContext = {
   host: "gitlab.example.com",
   project: "group/project",
@@ -33,6 +35,7 @@ function ok(value: unknown) {
 
 beforeEach(() => {
   glApiResultMock.mockReset();
+  runJqMock.mockReset();
 });
 
 describe("api method + path parsing", () => {
@@ -240,5 +243,131 @@ describe("api errors and help", () => {
   it("returns API_HELP when no args are given", async () => {
     const out = await apiCommand([], ctx);
     expect(out).toBe(API_HELP);
+  });
+});
+
+describe("api --jq extraction", () => {
+  function jqOk(stdout: string) {
+    return { stdout, stderr: "", exitCode: 0 };
+  }
+
+  it("extracts a single field and trims the trailing newline", async () => {
+    glApiResultMock.mockResolvedValueOnce(
+      ok({ iid: 5, state: "opened", web_url: "x" }),
+    );
+    runJqMock.mockResolvedValueOnce(jqOk("opened\n"));
+    const out = await apiCommand(
+      ["projects/{project}/merge_requests/5", "--jq", ".state"],
+      ctx,
+    );
+    expect(out).toBe("opened");
+    const [input, expr] = runJqMock.mock.calls[0];
+    expect(expr).toBe(".state");
+    // jq receives the RAW response, noisy fields intact, not the TOON view.
+    expect(JSON.parse(input)).toEqual({
+      iid: 5,
+      state: "opened",
+      web_url: "x",
+    });
+  });
+
+  it("preserves internal newlines (e.g. .[] over an array)", async () => {
+    glApiResultMock.mockResolvedValueOnce(ok([{ name: "a" }, { name: "b" }]));
+    runJqMock.mockResolvedValueOnce(jqOk("a\nb\n"));
+    const out = await apiCommand(
+      ["projects/{project}/members", "--jq", ".[].name"],
+      ctx,
+    );
+    expect(out).toBe("a\nb");
+  });
+
+  it("accepts the --jq=<expr> form", async () => {
+    glApiResultMock.mockResolvedValueOnce(ok({ state: "merged" }));
+    runJqMock.mockResolvedValueOnce(jqOk("merged\n"));
+    await apiCommand(["projects/{project}/x", "--jq=.state"], ctx);
+    expect(runJqMock.mock.calls[0][1]).toBe(".state");
+  });
+
+  it("does not misread the jq expression as the path when it precedes it", async () => {
+    glApiResultMock.mockResolvedValueOnce(ok({ state: "opened" }));
+    runJqMock.mockResolvedValueOnce(jqOk("opened\n"));
+    await apiCommand(
+      ["--jq", ".state", "projects/{project}/merge_requests/5"],
+      ctx,
+    );
+    expect(glApiResultMock.mock.calls[0][0]).toBe(
+      `projects/${PID}/merge_requests/5`,
+    );
+  });
+
+  it("takes precedence over --raw when both are passed", async () => {
+    glApiResultMock.mockResolvedValueOnce(ok({ state: "opened" }));
+    runJqMock.mockResolvedValueOnce(jqOk("opened\n"));
+    const out = await apiCommand(
+      ["projects/{project}/x", "--raw", "--jq", ".state"],
+      ctx,
+    );
+    expect(out).toBe("opened");
+    expect(runJqMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("throws a validation error when --jq has no expression", async () => {
+    await expect(
+      apiCommand(["projects/{project}/x", "--jq"], ctx),
+    ).rejects.toThrow("--jq flag requires an expression");
+    expect(glApiResultMock).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a helpful error when the jq binary is missing", async () => {
+    glApiResultMock.mockResolvedValueOnce(ok({ state: "opened" }));
+    runJqMock.mockResolvedValueOnce({
+      stdout: "",
+      stderr: "ENOENT",
+      exitCode: 127,
+    });
+    await expect(
+      apiCommand(["projects/{project}/x", "--jq", ".state"], ctx),
+    ).rejects.toThrow("jq is not installed");
+  });
+
+  it("maps a jq program error to a validation error", async () => {
+    glApiResultMock.mockResolvedValueOnce(ok({ state: "opened" }));
+    runJqMock.mockResolvedValueOnce({
+      stdout: "",
+      stderr: "jq: error: syntax error, unexpected end\nmore",
+      exitCode: 3,
+    });
+    await expect(
+      apiCommand(["projects/{project}/x", "--jq", ".("], ctx),
+    ).rejects.toThrow("jq: error: syntax error");
+  });
+});
+
+describe("api --raw / --json", () => {
+  it("prints the raw JSON verbatim (parseable, noisy fields intact)", async () => {
+    glApiResultMock.mockResolvedValueOnce(
+      ok({ id: 1, state: "opened", web_url: "x" }),
+    );
+    const out = await apiCommand(["projects/{project}/x", "--raw"], ctx);
+    expect(JSON.parse(out)).toEqual({ id: 1, state: "opened", web_url: "x" });
+    // Not TOON, and jq is never invoked for the plain escape hatch.
+    expect(out).not.toContain("state: opened");
+    expect(runJqMock).not.toHaveBeenCalled();
+  });
+
+  it("treats --json as an alias for --raw", async () => {
+    glApiResultMock.mockResolvedValueOnce(ok({ id: 2, web_url: "y" }));
+    const out = await apiCommand(["projects/{project}/x", "--json"], ctx);
+    expect(JSON.parse(out)).toEqual({ id: 2, web_url: "y" });
+  });
+
+  it("still emits stripped TOON by default (no flag)", async () => {
+    glApiResultMock.mockResolvedValueOnce(
+      ok({ id: 1, state: "opened", web_url: "x" }),
+    );
+    const out = await apiCommand(["projects/{project}/x"], ctx);
+    expect(out).toContain("state: opened");
+    expect(out).not.toContain("web_url");
+    expect(runJqMock).not.toHaveBeenCalled();
   });
 });

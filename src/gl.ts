@@ -152,3 +152,33 @@ export async function glApiResult(
   if (result.stderr === "ENOENT") throw glNotInstalledError();
   return result;
 }
+
+/**
+ * Pipe JSON text through the system `jq` binary (raw output, `-r`), returning
+ * the full result without throwing. Backs `api --jq`, giving real jq semantics
+ * with zero extra npm deps; a missing binary surfaces as `stderr === "ENOENT"`
+ * (exit 127) for the caller to translate.
+ */
+export function runJq(input: string, expr: string): Promise<ExecResult> {
+  return new Promise((resolve) => {
+    const child = execFile(
+      "jq",
+      ["-r", expr],
+      { maxBuffer: MAX_BUFFER_BYTES },
+      (error, stdout, stderr) => {
+        const err = error as (Error & { code?: string | number }) | null;
+        if (err && err.code === "ENOENT") {
+          resolve({ stdout: "", stderr: "ENOENT", exitCode: 127 });
+          return;
+        }
+        const exitCode = err
+          ? typeof err.code === "number"
+            ? err.code
+            : 1
+          : 0;
+        resolve({ stdout: stdout ?? "", stderr: stderr ?? "", exitCode });
+      },
+    );
+    child.stdin?.end(input);
+  });
+}

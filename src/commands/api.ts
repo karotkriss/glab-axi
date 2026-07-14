@@ -1,8 +1,8 @@
 import { encode } from "@toon-format/toon";
-import { glApiResult, projectId, type Json } from "../gl.js";
+import { glApiResult, projectId, runJq, type Json } from "../gl.js";
 import { AxiError, mapGlError } from "../errors.js";
 import type { RepoContext } from "../context.js";
-import { getAllFlags, hasFlag } from "../args.js";
+import { getAllFlags, getFlag, hasFlag } from "../args.js";
 import { cleanBody } from "../body.js";
 
 // ---------------------------------------------------------------------------
@@ -12,7 +12,7 @@ import { cleanBody } from "../body.js";
 const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"];
 
 /** Flags that consume a following value token (when not in --flag=value form). */
-const VALUE_FLAGS = new Set(["--field", "--raw-field", "--header"]);
+const VALUE_FLAGS = new Set(["--field", "--raw-field", "--header", "--jq"]);
 
 /**
  * Derive the positional args (method/path), skipping flags and the value tokens
@@ -70,10 +70,14 @@ flags:
   --raw-field <k=v>  raw string parameter, repeatable
   --header <k:v>     extra HTTP header, repeatable
   --paginate         follow pagination and aggregate all pages
+  --jq <expr>        extract a value from the raw JSON via jq (-r); takes precedence over --raw
+  --raw, --json      print the raw JSON response verbatim instead of TOON
 examples:
   glab-axi api projects/{project}/members
   glab-axi api GET projects/{project}/merge_requests --field state=opened
-  glab-axi api POST projects/{project}/issues --raw-field title="Bug" --raw-field description="Details"`;
+  glab-axi api POST projects/{project}/issues --raw-field title="Bug" --raw-field description="Details"
+  glab-axi api projects/{project}/merge_requests/5 --jq .state
+  glab-axi api projects/{project} --raw`;
 
 // ---------------------------------------------------------------------------
 // Response cleaning
@@ -159,6 +163,15 @@ export async function apiCommand(
   const fields = getAllFlags(args, "--field");
   const rawFields = getAllFlags(args, "--raw-field");
   const headers = getAllFlags(args, "--header");
+  const raw = hasFlag(args, "--raw") || hasFlag(args, "--json");
+  const hasJq = args.some((a) => a === "--jq" || a.startsWith("--jq="));
+  const jqExpr = hasJq ? getFlag(args, "--jq") : undefined;
+  if (hasJq && !jqExpr) {
+    throw new AxiError(
+      "The --jq flag requires an expression, e.g. --jq '.state'",
+      "VALIDATION_ERROR",
+    );
+  }
 
   const positionals = extractPositionals(args);
   if (positionals.length === 0) {
@@ -182,6 +195,30 @@ export async function apiCommand(
 
   if (result.exitCode !== 0) {
     throw mapGlError(result.stderr || result.stdout, result.exitCode);
+  }
+
+  // Escape hatches for callers that need to parse the response themselves,
+  // mirroring `gh api --jq` / raw JSON. Both operate on the raw, unmodified
+  // response, not the noise-stripped TOON view the default path renders.
+  if (jqExpr !== undefined) {
+    const jq = await runJq(result.stdout, jqExpr);
+    if (jq.stderr === "ENOENT") {
+      throw new AxiError(
+        "jq is not installed - pass --raw and pipe to your own jq instead",
+        "CLI_NOT_INSTALLED",
+      );
+    }
+    if (jq.exitCode !== 0) {
+      const line = jq.stderr.trim().split("\n")[0];
+      throw new AxiError(
+        line || `jq failed (exit ${jq.exitCode})`,
+        "VALIDATION_ERROR",
+      );
+    }
+    return jq.stdout.replace(/\n$/, "");
+  }
+  if (raw) {
+    return result.stdout.trim();
   }
 
   const stdout = result.stdout;
