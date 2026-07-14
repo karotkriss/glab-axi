@@ -154,6 +154,13 @@ const table: Entry[] = [
     ],
   },
   {
+    match: (c) => c.domain === "mr" && c.action === "diff",
+    lines: (c) => [
+      `Run \`glab-axi${repoFlag(c)} mr view ${c.id} --reviews\` to see approvals and thread resolution`,
+      `Run \`glab-axi${repoFlag(c)} mr approve ${c.id}\` to approve`,
+    ],
+  },
+  {
     match: (c) =>
       c.domain === "mr" &&
       (c.action === "update" ||

@@ -21,8 +21,10 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - **Never pass `-R` to `glab api`** - it rejects `-R`, and this previously broke `api` and `ci log` under `-R` targeting. The host goes through the env, the project through the path.
 - `src/context.ts` - `resolveRepo`: priority `--repo` flag > git remote origin. `GITLAB_HOST` only OVERRIDES the host; by itself it does not select a project. `-R` accepts `[host/]group/project`; a first segment containing a dot is treated as the host. Nested group paths are supported.
 - `src/commands/*.ts` - one file per domain (issue, mr, ci, project, label, release, search, api, home, setup). `mr.ts` is the reference template.
-- `mr view`/`mr checks` accept a full MR URL in place of the IID; the URL's own host/project target the request (precedence: `-R` flag > URL > git remote), tagged `source: "flag"` so it flows through to help suggestions like an explicit `-R`.
+- `mr view`/`mr checks`/`mr diff` accept a full MR URL in place of the IID; the URL's own host/project target the request (precedence: `-R` flag > URL > git remote), tagged `source: "flag"` so it flows through to help suggestions like an explicit `-R`.
 - `mr checks` reuses `ci.ts`'s exported `resolveMrPipeline`/`fetchJobs`/`renderSummary` rather than reimplementing verdict bucketing - intentional cross-command reuse.
+- `mr diff` uses the MR `/changes` endpoint (single call; its `overflow` flag marks a server-truncated diff on huge MRs), not the paginated `/diffs`. Default is a bounded per-file summary (path, status, `+`/`-` counts derived by counting hunk lines); `--full` reconstructs the `diff --git`/`---`/`+++` headers GitLab omits, since each `changes[].diff` is only the hunk body (starts at `@@`).
+- `mr view --reviews` folds `/approvals` + `/discussions` into a review summary: it derives the `approved` bool when GitLab CE omits it (`given >= approvals_required`), and counts only *resolvable* threads (plain comments are excluded from the resolved/unresolved totals).
 - `ci watch <pipeline-id>` polls until the pipeline is terminal, then prints the same verdict aggregate as `ci status`. Terminal detection lists the ACTIVE statuses and treats everything else as terminal, so an unknown GitLab status can't spin the loop forever; polling is bounded by poll count (`timeout / interval`), not wall-clock.
 - `ci watch`'s exit code follows the pipeline's own status, not the job verdict (a canceled pipeline with passing jobs still exits non-zero): success -> 0, anything else -> `process.exitCode = 1`, since throwing an `AxiError` would replace the verdict output on stdout. The delay goes through `src/sleep.ts` so tests can mock it away instead of waiting real seconds.
 - IID-addressed: issues and merge requests use their project-scoped IID (the number in the URL), not the global id.
@@ -39,3 +41,10 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 ## Targeting a self-hosted instance
 
 The tool is fully generic. Point it at any self-hosted GitLab with `GITLAB_HOST=<host>` (or `-R <host>/group/project`, or a git remote on that host). Do not hardcode any host anywhere.
+
+## Maintaining this file
+
+Keep this file for knowledge useful to almost every future agent session in this project.
+Do not repeat what the codebase already shows; point to the authoritative file or command instead.
+Prefer rewriting or pruning existing entries over appending new ones.
+When updating this file, preserve this bar for all agents and keep entries concise.

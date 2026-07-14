@@ -434,6 +434,155 @@ describe("mr checks", () => {
   });
 });
 
+describe("mr view --reviews", () => {
+  it("surfaces approval state and thread resolution", async () => {
+    glApiMock.mockResolvedValueOnce(mr()); // GET mr
+    glApiMock.mockResolvedValueOnce({
+      approvals_required: 2,
+      approved_by: [{ user: { username: "alice" } }],
+    }); // GET /approvals
+    glApiMock.mockResolvedValueOnce([
+      { notes: [{ resolvable: true, resolved: true }] }, // resolved thread
+      { notes: [{ resolvable: true, resolved: false }] }, // unresolved thread
+      { notes: [{ resolvable: false }] }, // plain comment, not a thread
+    ]); // GET /discussions
+    const out = await mrCommand(["view", "42", "--reviews"], ctx);
+    expect(glApiMock.mock.calls[1][0]).toContain("/approvals");
+    expect(glApiMock.mock.calls[2][0]).toContain("/discussions");
+    expect(out).toContain("reviews:");
+    // approvals_required=2, given=1 → not approved
+    expect(out).toContain("approved: no");
+    expect(out).toContain("approvals: 1/2");
+    expect(out).toContain("approved_by: alice");
+    expect(out).toContain("2 total, 1 resolved, 1 unresolved");
+  });
+
+  it("reports approved when the GitLab `approved` bool is present", async () => {
+    glApiMock.mockResolvedValueOnce(mr());
+    glApiMock.mockResolvedValueOnce({
+      approved: true,
+      approvals_required: 1,
+      approved_by: [{ user: { username: "bob" } }],
+    });
+    glApiMock.mockResolvedValueOnce([]);
+    const out = await mrCommand(["view", "42", "--reviews"], ctx);
+    expect(out).toContain("approved: yes");
+    expect(out).toContain("0 total, 0 resolved, 0 unresolved");
+  });
+
+  it("shows approved_by none with no approvers", async () => {
+    glApiMock.mockResolvedValueOnce(mr());
+    glApiMock.mockResolvedValueOnce({ approvals_required: 1, approved_by: [] });
+    glApiMock.mockResolvedValueOnce([]);
+    const out = await mrCommand(["view", "42", "--reviews"], ctx);
+    expect(out).toContain("approved: no");
+    expect(out).toContain("approved_by: none");
+  });
+});
+
+describe("mr diff", () => {
+  function change(overrides: Record<string, unknown> = {}) {
+    return {
+      old_path: "src/a.ts",
+      new_path: "src/a.ts",
+      new_file: false,
+      renamed_file: false,
+      deleted_file: false,
+      diff: "@@ -1,2 +1,3 @@\n ctx\n-old\n+new1\n+new2\n",
+      ...overrides,
+    };
+  }
+
+  it("hits the /changes endpoint and renders a per-file summary with totals", async () => {
+    glApiMock.mockResolvedValueOnce({
+      changes: [
+        change(), // +2 -1
+        change({
+          old_path: "new.ts",
+          new_path: "new.ts",
+          new_file: true,
+          diff: "@@ -0,0 +1,2 @@\n+a\n+b\n", // +2 -0
+        }),
+      ],
+    });
+    const out = await mrCommand(["diff", "42"], ctx);
+    expect(glApiMock.mock.calls[0][0]).toBe(
+      `projects/${PID}/merge_requests/42/changes`,
+    );
+    expect(out).toContain("diff: 2 files changed, +4 -1");
+    expect(out).toContain("files[2]");
+    expect(out).toContain("src/a.ts");
+    expect(out).toContain("added");
+    // The summary points at the complete diff.
+    expect(out).toContain("mr diff 42 --full");
+  });
+
+  it("--full emits a reconstructed unified diff with git headers", async () => {
+    glApiMock.mockResolvedValueOnce({
+      changes: [
+        change({
+          old_path: "new.ts",
+          new_path: "new.ts",
+          new_file: true,
+          diff: "@@ -0,0 +1,2 @@\n+a\n+b\n",
+        }),
+        change({
+          old_path: "gone.ts",
+          new_path: "gone.ts",
+          deleted_file: true,
+          diff: "@@ -1,2 +0,0 @@\n-x\n-y\n",
+        }),
+      ],
+    });
+    const out = await mrCommand(["diff", "42", "--full"], ctx);
+    expect(out).toContain("merge_request_diff");
+    expect(out).toContain("files_changed: 2");
+    expect(out).toContain("diff --git a/new.ts b/new.ts");
+    // new file: old side maps to /dev/null; deleted file: new side does.
+    expect(out).toContain("--- /dev/null");
+    expect(out).toContain("+++ /dev/null");
+  });
+
+  it("renders a rename as `old -> new`", async () => {
+    glApiMock.mockResolvedValueOnce({
+      changes: [
+        change({
+          old_path: "old.ts",
+          new_path: "renamed.ts",
+          renamed_file: true,
+          diff: "",
+        }),
+      ],
+    });
+    const out = await mrCommand(["diff", "42"], ctx);
+    expect(out).toContain("old.ts -> renamed.ts");
+    expect(out).toContain("renamed");
+  });
+
+  it("gives a definitive empty state when there are no changes", async () => {
+    glApiMock.mockResolvedValueOnce({ changes: [] });
+    const out = await mrCommand(["diff", "42"], ctx);
+    expect(out).toContain("no file changes found for merge request 42");
+  });
+
+  it("flags a server-truncated (overflow) diff in the summary", async () => {
+    glApiMock.mockResolvedValueOnce({ changes: [change()], overflow: true });
+    const out = await mrCommand(["diff", "42"], ctx);
+    expect(out).toContain("server-truncated");
+  });
+
+  it("resolves an MR URL to its iid", async () => {
+    glApiMock.mockResolvedValueOnce({ changes: [change()] });
+    await mrCommand(
+      ["diff", "https://gitlab.example.com/group/project/-/merge_requests/42"],
+      ctx,
+    );
+    expect(glApiMock.mock.calls[0][0]).toBe(
+      `projects/${PID}/merge_requests/42/changes`,
+    );
+  });
+});
+
 describe("mr router", () => {
   it("returns help for no subcommand", async () => {
     const out = await mrCommand([], ctx);
