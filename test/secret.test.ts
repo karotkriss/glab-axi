@@ -72,6 +72,17 @@ describe("secret list", () => {
     const out = await secretCommand(["list"], ctx);
     expect(out).toContain("secrets: 0 secrets found");
   });
+
+  it("flags truncation when the raw page is full, even after filtering shrinks the count", async () => {
+    // Raw page hits --limit 2, but one of those is unmasked and filtered
+    // out, so the visible count (1) must not be mistaken for the full set.
+    glApiMock.mockResolvedValueOnce([
+      variable(),
+      variable({ key: "NODE_ENV", value: "production", masked: false }),
+    ]);
+    const out = await secretCommand(["list", "--limit", "2"], ctx);
+    expect(out).toContain("count: 1 (showing first 1)");
+  });
 });
 
 describe("secret set", () => {

@@ -274,6 +274,14 @@ const table: Entry[] = [
     ],
   },
   {
+    match: (c) =>
+      c.domain === "variable" && c.action === "get" && c.state === "masked",
+    lines: (c) => [
+      `Run \`glab-axi${repoFlag(c)} secret list\` to see masked variables (values are not shown)`,
+      `Run \`glab-axi${repoFlag(c)} variable delete ${c.id}\` to delete it`,
+    ],
+  },
+  {
     match: (c) => c.domain === "variable" && c.action === "get",
     lines: (c) => [
       `Run \`glab-axi${repoFlag(c)} variable set ${c.id} --value "..."\` to update it`,

@@ -64,6 +64,9 @@ async function secretList(args: string[], ctx?: RepoContext): Promise<string> {
   // Only masked variables are "secrets"; render key + flags, never the value.
   const items = all.filter((v) => v.masked);
   const isEmpty = items.length === 0;
+  // A full raw page means more variables may exist beyond it, even after the
+  // masked filter shrinks the visible count below `limit`.
+  const truncated = all.length === limit;
 
   if (isEmpty) {
     return renderOutput([
@@ -79,7 +82,10 @@ async function secretList(args: string[], ctx?: RepoContext): Promise<string> {
     ]);
   }
   return renderOutput([
-    formatCountLine({ count: items.length, limit }),
+    formatCountLine({
+      count: items.length,
+      limit: truncated ? items.length : undefined,
+    }),
     renderList("secrets", items, listSchema),
     renderHelp(
       getSuggestions({ domain: "secret", action: "list", isEmpty, repo: ctx }),
