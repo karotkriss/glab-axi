@@ -3,13 +3,30 @@ name: Release
 # Publishes glab-axi to npm when a GitHub release is published.
 # Release notes are sourced from the matching CHANGELOG.md section at
 # release-creation time (see skills/glab-axi-release/SKILL.md); this workflow
-# only handles the npm publish. Auth uses the NPM_TOKEN repository secret,
-# which a maintainer must add once (Settings -> Secrets and variables ->
-# Actions). id-token: write enables --provenance for supply-chain trust.
+# only handles the npm publish.
+#
+# Auth uses NPM_TOKEN as an ENVIRONMENT secret on the `npm-publish` environment.
+# A maintainer must create a GitHub Actions Environment named exactly
+# `npm-publish` (Settings -> Environments) and add NPM_TOKEN to it. The job's
+# `environment:` name and the environment holding the secret must match, or
+# ${{ secrets.NPM_TOKEN }} resolves to empty and publishing fails.
+# id-token: write enables --provenance for supply-chain trust.
+#
+# workflow_dispatch runs the same pipeline in dry-run mode (the default): it
+# packs and validates the tarball and checks that the environment secret
+# authenticates, without uploading anything. A real publish happens only on
+# `release: published`, so a dispatch with dry_run disabled is just a
+# build/test smoke run.
 
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Verify the publish pipeline without uploading to npm"
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -18,6 +35,7 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    environment: npm-publish
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -30,7 +48,19 @@ jobs:
         run: npm run build
       - name: Test
         run: npm test
+      # npm whoami prints the resolved npm username, never the token itself.
+      - name: Verify npm auth (dry run)
+        if: inputs.dry_run
+        run: npm whoami
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Pack and validate the tarball (dry run)
+        if: inputs.dry_run
+        run: npm publish --dry-run
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Publish to npm
+        if: github.event_name == 'release'
         run: npm publish --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

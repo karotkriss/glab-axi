@@ -189,7 +189,23 @@ Publishing is automated. When a **GitHub release is published**, [`.github/workf
 
 The full step-by-step (move Unreleased to a new version, bump `package.json`, tag, create the release, verify the publish) lives in the `glab-axi-release` skill under [`skills/glab-axi-release/`](./skills/glab-axi-release/SKILL.md).
 
-> **One-time setup (required):** the publish step authenticates with an `NPM_TOKEN` **repository secret** that a maintainer must add manually at GitHub -> Settings -> Secrets and variables -> Actions -> New repository secret. Use an npm automation token with publish rights. Until it exists, every release run fails at the publish step.
+> **One-time setup (required):** the publish job runs in a GitHub Actions **Environment named exactly `npm-publish`**, and authenticates with `NPM_TOKEN` as an **environment secret** on that environment - not a repository secret.
+>
+> 1. Create the environment: GitHub -> Settings -> Environments -> New environment, named `npm-publish` (the name must match the workflow's `environment:` exactly, or `${{ secrets.NPM_TOKEN }}` resolves to empty and the publish fails).
+> 2. Add the secret to it: on that environment's page -> Environment secrets -> Add secret, named `NPM_TOKEN`, holding an npm automation token with publish rights.
+>
+> Until both exist, every release run fails at the publish step.
+
+### Testing the publish pipeline without publishing
+
+Before cutting the first real release, verify the environment secret and the whole pipeline with a dry run. The workflow has a manual `workflow_dispatch` trigger whose `dry_run` input defaults to **true**:
+
+```sh
+gh workflow run release.yml -f dry_run=true
+gh run watch "$(gh run list --workflow=release.yml --limit 1 --json databaseId --jq '.[0].databaseId')"
+```
+
+(Or use the Actions tab -> Release -> Run workflow.) A dry run does the full checkout, install, build, and test, then runs `npm whoami` to confirm the environment secret authenticates and `npm publish --dry-run` to pack and validate the tarball. **It never uploads anything.** A real publish happens only when a GitHub release is published.
 
 ## License
 
