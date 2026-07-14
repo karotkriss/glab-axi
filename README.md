@@ -58,7 +58,7 @@ Every response ends with `help:` hints for logical next steps. Run `glab-axi --h
 | (none)    | Dashboard of the current project |
 | `issue`   | list / view / create / edit / close / reopen / comment |
 | `mr`      | list / view / create / update / merge / approve / checks / comment (by IID; `view` and `checks` also take a full MR URL) |
-| `ci`      | list / view / status / jobs / log / retry (pipelines) |
+| `ci`      | list / view / status / jobs / watch / log / retry (pipelines; `watch` blocks until a pipeline finishes and exits non-zero if it did not succeed) |
 | `project` | view / list |
 | `label`   | list / create / delete |
 | `release` | list / view / create / delete |
