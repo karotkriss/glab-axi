@@ -478,6 +478,15 @@ describe("mr view --reviews", () => {
     expect(out).toContain("approved: no");
     expect(out).toContain("approved_by: none");
   });
+
+  it("derives approved when no approval rule is configured", async () => {
+    glApiMock.mockResolvedValueOnce(mr());
+    glApiMock.mockResolvedValueOnce({ approvals_required: 0, approved_by: [] });
+    glApiMock.mockResolvedValueOnce([]);
+    const out = await mrCommand(["view", "42", "--reviews"], ctx);
+    expect(out).toContain("approved: yes");
+    expect(out).toContain("approvals: 0/0");
+  });
 });
 
 describe("mr diff", () => {
@@ -559,6 +568,23 @@ describe("mr diff", () => {
     const out = await mrCommand(["diff", "42"], ctx);
     expect(out).toContain("old.ts -> renamed.ts");
     expect(out).toContain("renamed");
+  });
+
+  it("--full emits rename headers with no trailing garbage for a pure rename", async () => {
+    glApiMock.mockResolvedValueOnce({
+      changes: [
+        change({
+          old_path: "old.ts",
+          new_path: "renamed.ts",
+          renamed_file: true,
+          diff: "",
+        }),
+      ],
+    });
+    const out = await mrCommand(["diff", "42", "--full"], ctx);
+    expect(out).toContain("rename from old.ts");
+    expect(out).toContain("rename to renamed.ts");
+    expect(out).not.toContain("--- a/old.ts");
   });
 
   it("gives a definitive empty state when there are no changes", async () => {
