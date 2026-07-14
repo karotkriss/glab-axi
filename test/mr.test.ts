@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// Mock the gl executor so no real glab/network is touched.
+// Mock the gl executor so no real glab/network/jq is touched.
 vi.mock("../src/gl.js", () => {
   return {
     glApi: vi.fn(),
     glRaw: vi.fn(),
     glApiResult: vi.fn(),
+    runJq: vi.fn(),
     projectId: (ctx?: { project: string }) =>
       ctx ? encodeURIComponent(ctx.project) : "{project}",
     requireProject: (ctx?: { project: string }) => {
@@ -16,10 +17,12 @@ vi.mock("../src/gl.js", () => {
 });
 
 import { mrCommand } from "../src/commands/mr.js";
-import { glApi } from "../src/gl.js";
+import { glApi, glApiResult, runJq } from "../src/gl.js";
 import type { RepoContext } from "../src/context.js";
 
 const glApiMock = glApi as unknown as ReturnType<typeof vi.fn>;
+const glApiResultMock = glApiResult as unknown as ReturnType<typeof vi.fn>;
+const runJqMock = runJq as unknown as ReturnType<typeof vi.fn>;
 const ctx: RepoContext = {
   host: "gitlab.example.com",
   project: "group/project",
@@ -29,6 +32,8 @@ const PID = encodeURIComponent("group/project");
 
 beforeEach(() => {
   glApiMock.mockReset();
+  glApiResultMock.mockReset();
+  runJqMock.mockReset();
 });
 
 function mr(overrides: Record<string, unknown> = {}) {
@@ -272,6 +277,147 @@ describe("mr merge", () => {
     await expect(
       mrCommand(["merge", "42", "--squash", "--rebase"], ctx),
     ).rejects.toThrow("only one merge method");
+  });
+
+  it("--auto sets merge_when_pipeline_succeeds and reports the scheduled state", async () => {
+    glApiMock.mockResolvedValueOnce(mr()); // state check
+    glApiMock.mockResolvedValueOnce(
+      mr({ state: "opened", merge_when_pipeline_succeeds: true }),
+    ); // merge PUT
+    const out = await mrCommand(["merge", "42", "--auto"], ctx);
+    const mergeCall = glApiMock.mock.calls[1];
+    expect(mergeCall[0]).toContain("/merge");
+    expect(mergeCall[1].fields).toContain("merge_when_pipeline_succeeds=true");
+    expect(out).toContain("auto_merge: enabled");
+    expect(out).toContain("merge_when_pipeline_succeeds: yes");
+    expect(out).not.toContain("merge_commit_sha");
+  });
+
+  it("--auto merges immediately when GitLab reports the MR merged", async () => {
+    glApiMock.mockResolvedValueOnce(mr()); // state check
+    glApiMock.mockResolvedValueOnce(
+      mr({ state: "merged", merge_commit_sha: "abc123" }),
+    ); // merge PUT merged right away
+    const out = await mrCommand(["merge", "42", "--auto"], ctx);
+    expect(out).toContain("merged");
+    expect(out).toContain("abc123");
+  });
+
+  it("--auto combines with --squash", async () => {
+    glApiMock.mockResolvedValueOnce(mr()); // state check
+    glApiMock.mockResolvedValueOnce(mr({ state: "opened" })); // merge PUT
+    await mrCommand(["merge", "42", "--auto", "--squash"], ctx);
+    const fields = glApiMock.mock.calls[1][1].fields;
+    expect(fields).toContain("squash=true");
+    expect(fields).toContain("merge_when_pipeline_succeeds=true");
+  });
+
+  it("rejects --auto combined with --rebase", async () => {
+    await expect(
+      mrCommand(["merge", "42", "--auto", "--rebase"], ctx),
+    ).rejects.toThrow("cannot be combined with --auto");
+    // Rejected before any API call.
+    expect(glApiMock.mock.calls.length).toBe(0);
+  });
+});
+
+describe("mr list/view --json and --jq", () => {
+  it("list --json prints the raw JSON response verbatim (no TOON)", async () => {
+    const raw = JSON.stringify([{ iid: 42, state: "opened" }]);
+    glApiResultMock.mockResolvedValueOnce({
+      stdout: raw,
+      stderr: "",
+      exitCode: 0,
+    });
+    const out = await mrCommand(["list", "--json"], ctx);
+    expect(out).toBe(raw);
+    // Took the raw glApiResult path, not the parsed/TOON glApi path.
+    expect(glApiMock).not.toHaveBeenCalled();
+    expect(glApiResultMock.mock.calls[0][0]).toContain(
+      `projects/${PID}/merge_requests`,
+    );
+  });
+
+  it("list --jq runs jq over the raw response", async () => {
+    glApiResultMock.mockResolvedValueOnce({
+      stdout: "[{}]",
+      stderr: "",
+      exitCode: 0,
+    });
+    runJqMock.mockResolvedValueOnce({
+      stdout: "42\n43\n",
+      stderr: "",
+      exitCode: 0,
+    });
+    const out = await mrCommand(["list", "--jq", ".[].iid"], ctx);
+    expect(runJqMock.mock.calls[0][1]).toBe(".[].iid");
+    expect(out).toBe("42\n43");
+    expect(glApiMock).not.toHaveBeenCalled();
+  });
+
+  it("view --json returns the raw MR object", async () => {
+    const raw = JSON.stringify({ iid: 42, detailed_merge_status: "mergeable" });
+    glApiResultMock.mockResolvedValueOnce({
+      stdout: raw,
+      stderr: "",
+      exitCode: 0,
+    });
+    const out = await mrCommand(["view", "42", "--json"], ctx);
+    expect(out).toBe(raw);
+    expect(glApiResultMock.mock.calls[0][0]).toBe(
+      `projects/${PID}/merge_requests/42`,
+    );
+    expect(glApiMock).not.toHaveBeenCalled();
+  });
+
+  it("view --jq filters the raw MR object", async () => {
+    glApiResultMock.mockResolvedValueOnce({
+      stdout: "{}",
+      stderr: "",
+      exitCode: 0,
+    });
+    runJqMock.mockResolvedValueOnce({
+      stdout: "mergeable\n",
+      stderr: "",
+      exitCode: 0,
+    });
+    const out = await mrCommand(
+      ["view", "42", "--jq", ".detailed_merge_status"],
+      ctx,
+    );
+    expect(out).toBe("mergeable");
+  });
+
+  it("rejects --jq without an expression", async () => {
+    await expect(mrCommand(["view", "42", "--jq"], ctx)).rejects.toThrow(
+      "requires an expression",
+    );
+    expect(glApiResultMock).not.toHaveBeenCalled();
+  });
+
+  it("maps a jq program error to a validation error", async () => {
+    glApiResultMock.mockResolvedValueOnce({
+      stdout: "{}",
+      stderr: "",
+      exitCode: 0,
+    });
+    runJqMock.mockResolvedValueOnce({
+      stdout: "",
+      stderr: "jq: error: syntax error",
+      exitCode: 3,
+    });
+    await expect(mrCommand(["view", "42", "--jq", ".["], ctx)).rejects.toThrow(
+      "syntax error",
+    );
+  });
+
+  it("surfaces an API error on the --json path", async () => {
+    glApiResultMock.mockResolvedValueOnce({
+      stdout: "",
+      stderr: "404 Not Found",
+      exitCode: 1,
+    });
+    await expect(mrCommand(["view", "999", "--json"], ctx)).rejects.toThrow();
   });
 });
 

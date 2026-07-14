@@ -1,8 +1,9 @@
 import { encode } from "@toon-format/toon";
-import { glApiResult, projectId, runJq, type Json } from "../gl.js";
+import { glApiResult, projectId, type Json } from "../gl.js";
 import { AxiError, mapGlError } from "../errors.js";
 import type { RepoContext } from "../context.js";
 import { getAllFlags, getFlag, hasFlag } from "../args.js";
+import { applyJq } from "../machine.js";
 import { cleanBody } from "../body.js";
 
 // ---------------------------------------------------------------------------
@@ -201,21 +202,7 @@ export async function apiCommand(
   // mirroring `gh api --jq` / raw JSON. Both operate on the raw, unmodified
   // response, not the noise-stripped TOON view the default path renders.
   if (jqExpr !== undefined) {
-    const jq = await runJq(result.stdout, jqExpr);
-    if (jq.stderr === "ENOENT") {
-      throw new AxiError(
-        "jq is not installed - pass --raw and pipe to your own jq instead",
-        "CLI_NOT_INSTALLED",
-      );
-    }
-    if (jq.exitCode !== 0) {
-      const line = jq.stderr.trim().split("\n")[0];
-      throw new AxiError(
-        line || `jq failed (exit ${jq.exitCode})`,
-        "VALIDATION_ERROR",
-      );
-    }
-    return jq.stdout.replace(/\n$/, "");
+    return applyJq(result.stdout, jqExpr);
   }
   if (raw) {
     return result.stdout.trim();
