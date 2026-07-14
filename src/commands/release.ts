@@ -121,7 +121,7 @@ flags{create}:
 flags{delete}:
   (none)
 notes:
-  GitLab has no draft/prerelease flags: --prerelease dates the release in the future so it shows as "upcoming"; assets are links to hosted URLs, not uploaded files.
+  GitLab's Releases API has no draft/prerelease/generate-notes concepts. --prerelease dates the release in the future so it shows as "upcoming"; assets are links to hosted URLs, not uploaded files. --draft and --generate-notes are rejected with guidance (use --prerelease or omit; supply --body/--body-file) rather than silently ignored.
 examples:
   glab-axi release list
   glab-axi release view v1.0.0 --full
@@ -186,6 +186,26 @@ async function releaseCreate(
   ctx?: RepoContext,
 ): Promise<string> {
   requireProject(ctx);
+  // GitLab's Releases API has no draft or note-generation concept. Rather than
+  // silently no-op (a silent publish of a meant-to-be-hidden release is a real
+  // surprise) or emulate an approximation, refuse loudly with a usage error
+  // (VALIDATION_ERROR -> exit 2) that guides the agent to the real GitLab path.
+  if (takeBoolFlag(args, "--draft")) {
+    throw new AxiError(
+      "GitLab releases have no draft state - the Releases API cannot create an unpublished release",
+      "VALIDATION_ERROR",
+      [
+        "Use --prerelease to mark the release upcoming (a future released_at), or omit --draft to publish immediately",
+      ],
+    );
+  }
+  if (takeBoolFlag(args, "--generate-notes")) {
+    throw new AxiError(
+      "GitLab releases have no note-generation concept - the Releases API cannot auto-generate notes",
+      "VALIDATION_ERROR",
+      ['Provide notes explicitly with --body "..." or --body-file <path>'],
+    );
+  }
   const name = takeFlag(args, "--name");
   const body = takeBody(args);
   // `--target` mirrors gh-axi; `--ref` is the original glab-axi name. Both map

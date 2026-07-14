@@ -203,7 +203,7 @@ describe("release create", () => {
     // Explicit #name is used verbatim.
     expect(rawFields).toContain("assets[links][][name]=App bundle");
     expect(rawFields).toContain("assets[links][][url]=https://host/dl/app.zip");
-    // No #name → name derived from the URL's last path segment.
+    // No #name -> name derived from the URL's last path segment.
     expect(rawFields).toContain("assets[links][][name]=checksums.txt");
     expect(rawFields).toContain(
       "assets[links][][url]=https://host/dl/checksums.txt",
@@ -229,6 +229,26 @@ describe("release create", () => {
     );
     const out = await releaseCommand(["create", "v1.0.0"], ctx);
     expect(out).toContain("already: true");
+  });
+
+  it("refuses --draft with a usage error (exit 2) and never calls the API", async () => {
+    await expect(
+      releaseCommand(["create", "v1.0.0", "--draft"], ctx),
+    ).rejects.toMatchObject({
+      code: "VALIDATION_ERROR", // exitCodeForError -> 2
+      message: expect.stringMatching(/draft/i),
+    });
+    expect(glApiMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses --generate-notes with a usage error (exit 2) and never calls the API", async () => {
+    await expect(
+      releaseCommand(["create", "v1.0.0", "--generate-notes"], ctx),
+    ).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringMatching(/note-generation|auto-generate/i),
+    });
+    expect(glApiMock).not.toHaveBeenCalled();
   });
 });
 
@@ -261,7 +281,7 @@ describe("release delete", () => {
     });
     const out = await releaseCommand(["delete", "v9.9.9"], ctx);
     expect(out).toContain("already_absent: true");
-    // Only the GET ran — no DELETE attempted.
+    // Only the GET ran - no DELETE attempted.
     expect(glApiResultMock.mock.calls.length).toBe(1);
   });
 

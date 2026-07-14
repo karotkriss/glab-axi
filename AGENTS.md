@@ -25,6 +25,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - `mr checks` reuses `ci.ts`'s exported `resolveMrPipeline`/`fetchJobs`/`renderSummary` rather than reimplementing verdict bucketing - intentional cross-command reuse.
 - `ci watch <pipeline-id>` polls until the pipeline is terminal, then prints the same verdict aggregate as `ci status`. Terminal detection lists the ACTIVE statuses and treats everything else as terminal, so an unknown GitLab status can't spin the loop forever; polling is bounded by poll count (`timeout / interval`), not wall-clock.
 - `ci watch`'s exit code follows the pipeline's own status, not the job verdict (a canceled pipeline with passing jobs still exits non-zero): success -> 0, anything else -> `process.exitCode = 1`, since throwing an `AxiError` would replace the verdict output on stdout. The delay goes through `src/sleep.ts` so tests can mock it away instead of waiting real seconds.
+- `release create` mirrors gh-axi's flags onto the GitLab Releases API, which lacks direct equivalents for some (see `release --help` notes + `src/commands/release.ts` for the authoritative mapping): `--target` aliases `--ref` -> `ref`; `--prerelease` -> a far-future `released_at` (GitLab renders it "upcoming"); `--asset <url>[#name]` -> `assets[links][]` (links to hosted URLs, not file uploads; emit name-then-url per asset so Rails groups the pairs). `--draft`/`--generate-notes` have no GitLab concept and refuse with a `VALIDATION_ERROR` (exit 2) rather than silently no-op - a decided product call, not a stub.
 - IID-addressed: issues and merge requests use their project-scoped IID (the number in the URL), not the global id.
 - `glab` field flags are inverted from `gh`: `-F`/`--field` = typed, `-f`/`--raw-field` = raw string. In `GlApiOptions`, `fields` -> `-F` (ids/booleans), `rawFields` -> `-f` (user text: titles, bodies, labels).
 
@@ -39,3 +40,10 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 ## Targeting a self-hosted instance
 
 The tool is fully generic. Point it at any self-hosted GitLab with `GITLAB_HOST=<host>` (or `-R <host>/group/project`, or a git remote on that host). Do not hardcode any host anywhere.
+
+## Maintaining this file
+
+Keep this file for knowledge useful to almost every future agent session in this project.
+Do not repeat what the codebase already shows; point to the authoritative file or command instead.
+Prefer rewriting or pruning existing entries over appending new ones.
+When updating this file, preserve this bar for all agents and keep entries concise.
