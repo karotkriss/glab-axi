@@ -1,6 +1,17 @@
-import { glApi, projectId, requireProject, type Json } from "../gl.js";
-import { AxiError } from "../errors.js";
+import {
+  glApi,
+  glApiResult,
+  projectId,
+  requireProject,
+  type Json,
+} from "../gl.js";
+import { AxiError, mapGlError } from "../errors.js";
 import type { RepoContext } from "../context.js";
+import {
+  takeMachineFlags,
+  renderMachine,
+  type MachineFlags,
+} from "../machine.js";
 import { resolveMrPipeline, fetchJobs, renderSummary } from "./ci.js";
 import { takeBody, truncateBody } from "../body.js";
 import { formatCountLine } from "../format.js";
@@ -65,6 +76,23 @@ function mrPath(
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * `--json`/`--jq` escape hatch for read subcommands: fetch the raw GitLab
+ * response for `path` and emit it verbatim (or through jq), bypassing the TOON
+ * view. Errors surface as AxiErrors just like the parsed path.
+ */
+async function machineOutput(
+  path: string,
+  ctx: RepoContext | undefined,
+  flags: MachineFlags,
+): Promise<string> {
+  const result = await glApiResult(path, { ctx });
+  if (result.exitCode !== 0) {
+    throw mapGlError(result.stderr || result.stdout, result.exitCode);
+  }
+  return renderMachine(result.stdout, flags);
 }
 
 const MR_URL_RE = /\/-\/merge_requests\/(\d+)/;
@@ -288,9 +316,9 @@ export const MR_HELP = `usage: glab-axi mr <subcommand> [flags]
 subcommands[9]:
   list, view <iid|url>, create, update <iid>, merge <iid>, approve <iid>, checks <iid|url>, diff <iid|url>, comment <iid>
 flags{list}:
-  --state <opened|closed|merged|all>, --source-branch/--head <b>, --target-branch/--base <b>, --label, --author <user>, --assignee <user>, --milestone <name>, --draft, --limit <n> (default 30), --fields <a,b,c>
+  --state <opened|closed|merged|all>, --source-branch/--head <b>, --target-branch/--base <b>, --label, --author <user>, --assignee <user>, --milestone <name>, --draft, --limit <n> (default 30), --fields <a,b,c>, --json (raw JSON), --jq <expr> (jq filter over raw JSON)
 flags{view}:
-  --comments (include discussion notes), --reviews (approvals + thread resolution), --full (head SHA, merge status, pipeline, full body); accepts an MR URL in place of the iid
+  --comments (include discussion notes), --reviews (approvals + thread resolution), --full (head SHA, merge status, pipeline, full body), --json (raw JSON), --jq <expr> (jq filter over raw JSON); accepts an MR URL in place of the iid
 flags{diff}:
   --full (complete unified diff instead of the per-file summary); accepts an MR URL in place of the iid
 flags{create}:
@@ -298,7 +326,7 @@ flags{create}:
 flags{update}:
   --title, --body or --body-file, --label, --milestone <name>, --assignee <user>, --target-branch, --ready (clear Draft), --draft (mark Draft), --close, --reopen
 flags{merge}:
-  --method <merge|squash|rebase>, --merge, --squash, --rebase, --remove-source-branch, --body or --body-file (merge commit message)
+  --method <merge|squash|rebase>, --merge, --squash, --rebase, --auto (merge when the pipeline succeeds), --remove-source-branch/--delete-branch, --body or --body-file (merge commit message)
 flags{approve}:
   (none)
 flags{checks}:
@@ -309,12 +337,15 @@ examples:
   glab-axi mr list --state all --head feature-1 --limit 1
   glab-axi mr view 42 --full
   glab-axi mr view 42 --reviews
+  glab-axi mr view 42 --jq .detailed_merge_status
+  glab-axi mr list --state opened --jq '.[].iid'
   glab-axi mr view https://gitlab.example.com/group/project/-/merge_requests/42 --full
   glab-axi mr diff 42
   glab-axi mr diff 42 --full
   glab-axi mr checks 42
   glab-axi mr create --title "Add X" --source-branch feat --target-branch main
   glab-axi mr merge 42 --squash --remove-source-branch
+  glab-axi mr merge 42 --auto --squash
   glab-axi mr update 42 --ready`;
 
 // ---------------------------------------------------------------------------
@@ -322,6 +353,7 @@ examples:
 // ---------------------------------------------------------------------------
 
 async function mrList(args: string[], ctx?: RepoContext): Promise<string> {
+  const machine = takeMachineFlags(args);
   const fieldsArg = takeFlag(args, "--fields");
   const { extraDefs } = parseFields(fieldsArg, LIST_EXTRA_FIELDS);
   const state = mapState(takeFlag(args, "--state"));
@@ -349,11 +381,12 @@ async function mrList(args: string[], ctx?: RepoContext): Promise<string> {
   params.set("per_page", String(limit));
   params.set("order_by", "updated_at");
 
-  const items =
-    (await glApi<Json[]>(
-      `projects/${requireProject(ctx)}/merge_requests?${params.toString()}`,
-      { ctx },
-    )) ?? [];
+  const path = `projects/${requireProject(ctx)}/merge_requests?${params.toString()}`;
+  if (machine.jqExpr !== undefined || machine.raw) {
+    return machineOutput(path, ctx, machine);
+  }
+
+  const items = (await glApi<Json[]>(path, { ctx })) ?? [];
   const isEmpty = items.length === 0;
   const countLine = formatCountLine({ count: items.length, limit });
   const schema =
@@ -377,10 +410,14 @@ async function mrList(args: string[], ctx?: RepoContext): Promise<string> {
 }
 
 async function mrView(args: string[], ctx?: RepoContext): Promise<string> {
+  const machine = takeMachineFlags(args);
   const includeComments = takeBoolFlag(args, "--comments");
   const includeReviews = takeBoolFlag(args, "--reviews");
   const full = takeBoolFlag(args, "--full");
   const { iid, ctx: target } = resolveMrRef(args, ctx);
+  if (machine.jqExpr !== undefined || machine.raw) {
+    return machineOutput(mrPath(target, iid), target, machine);
+  }
   const mr = await glApi<Json>(mrPath(target, iid), { ctx: target });
 
   const schema = viewSchema(full, includeComments);
@@ -674,6 +711,7 @@ async function mrMerge(args: string[], ctx?: RepoContext): Promise<string> {
   const removeSource =
     takeBoolFlag(args, "--remove-source-branch") ||
     takeBoolFlag(args, "--delete-branch");
+  const auto = takeBoolFlag(args, "--auto");
   const body = takeBody(args);
   const iid = takeNumber(args, "merge request");
   if (shorthand.length > 1) {
@@ -696,6 +734,14 @@ async function mrMerge(args: string[], ctx?: RepoContext): Promise<string> {
   if (method && !["merge", "squash", "rebase"].includes(method)) {
     throw new AxiError(
       "--method must be one of: merge, squash, rebase",
+      "VALIDATION_ERROR",
+    );
+  }
+  // Auto-merge ("merge when pipeline succeeds") defers the merge; a rebase is an
+  // eager, synchronous operation, so the two can't be combined.
+  if (auto && method === "rebase") {
+    throw new AxiError(
+      "--rebase cannot be combined with --auto (auto-merge does not rebase)",
       "VALIDATION_ERROR",
     );
   }
@@ -739,6 +785,9 @@ async function mrMerge(args: string[], ctx?: RepoContext): Promise<string> {
   const rawFields: string[] = [];
   if (method === "squash") fields.push("squash=true");
   if (removeSource) fields.push("should_remove_source_branch=true");
+  // Auto-merge: GitLab merges once the head pipeline succeeds. If there is no
+  // pipeline (or it already passed) GitLab merges immediately instead.
+  if (auto) fields.push("merge_when_pipeline_succeeds=true");
   if (body !== undefined) rawFields.push(`merge_commit_message=${body}`);
 
   const merged = await glApi<Json>(mrPath(ctx, iid, "/merge"), {
@@ -747,6 +796,34 @@ async function mrMerge(args: string[], ctx?: RepoContext): Promise<string> {
     rawFields,
     ctx,
   });
+  const help = renderHelp(
+    getSuggestions({ domain: "mr", action: "merge", id: iid, repo: ctx }),
+  );
+
+  // Auto-merge that didn't merge immediately: report the scheduled state rather
+  // than a (nonexistent) merge commit.
+  if (auto && (merged.state ?? "") !== "merged") {
+    return renderOutput([
+      renderDetail(
+        "merge_request",
+        {
+          iid: merged.iid ?? iid,
+          state: merged.state ?? "opened",
+          auto_merge: "enabled",
+          merge_when_pipeline_succeeds:
+            merged.merge_when_pipeline_succeeds === true ? "yes" : "no",
+        },
+        [
+          field("iid"),
+          field("state"),
+          field("auto_merge"),
+          field("merge_when_pipeline_succeeds"),
+        ],
+      ),
+      help,
+    ]);
+  }
+
   return renderOutput([
     renderDetail(
       "merged",
@@ -764,9 +841,7 @@ async function mrMerge(args: string[], ctx?: RepoContext): Promise<string> {
         field("merge_commit_sha"),
       ],
     ),
-    renderHelp(
-      getSuggestions({ domain: "mr", action: "merge", id: iid, repo: ctx }),
-    ),
+    help,
   ]);
 }
 
