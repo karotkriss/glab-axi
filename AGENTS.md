@@ -45,7 +45,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 ## Releasing
 
 - Every change adds an entry under `## [Unreleased]` in `CHANGELOG.md` (Keep a Changelog format). That section is the single source of truth for a version's GitHub release notes.
-- Publishing is automated: `.github/workflows/release.yml` runs `npm publish --provenance` on `release: [published]` only (not on push/tag). Auth is the `NPM_TOKEN` repo secret (maintainer adds it once).
+- Publishing is automated: `.github/workflows/release.yml` builds, runs the test suite, then runs `npm publish --provenance` on `release: [published]` only (not on push/tag). Auth is the `NPM_TOKEN` repo secret (maintainer adds it once).
 - The end-to-end cut-a-release procedure (CHANGELOG move, version bump file list, tag, `gh release create` with notes extracted from the CHANGELOG section, verify via `npm view glab-axi version`) lives in the `glab-axi-release` skill (`skills/glab-axi-release/SKILL.md`) - follow it rather than reinventing the steps.
 
 ## Targeting a self-hosted instance

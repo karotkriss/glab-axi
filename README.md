@@ -159,7 +159,7 @@ Architecture notes live in [`AGENTS.md`](./AGENTS.md). The short version: every 
 
 Every notable change is recorded under `## [Unreleased]` in [`CHANGELOG.md`](./CHANGELOG.md), following the [Keep a Changelog](https://keepachangelog.com/) convention.
 
-Publishing is automated. When a **GitHub release is published**, [`.github/workflows/release.yml`](./.github/workflows/release.yml) builds and runs `npm publish --provenance`. Nothing publishes on a plain push or tag - only on a published release. The release's notes are sourced from the matching `CHANGELOG.md` section, which is the single source of truth for what shipped.
+Publishing is automated. When a **GitHub release is published**, [`.github/workflows/release.yml`](./.github/workflows/release.yml) builds, runs the test suite, and then runs `npm publish --provenance`. Nothing publishes on a plain push or tag - only on a published release, and only if the tests pass. The release's notes are sourced from the matching `CHANGELOG.md` section, which is the single source of truth for what shipped.
 
 The full step-by-step (move Unreleased to a new version, bump `package.json`, tag, create the release, verify the publish) lives in the `glab-axi-release` skill under [`skills/glab-axi-release/`](./skills/glab-axi-release/SKILL.md).
 

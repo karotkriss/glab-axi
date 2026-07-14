@@ -8,9 +8,10 @@ author: Christopher McKay
 # glab-axi-release
 
 Cut a glab-axi release end to end. Publishing to npm is automated: creating a
-GitHub release fires `.github/workflows/release.yml`, which runs
-`npm publish --provenance`. The release notes come from the CHANGELOG section
-for the version - that section is the single source of truth for the notes.
+GitHub release fires `.github/workflows/release.yml`, which builds, runs the
+test suite, and then runs `npm publish --provenance`. The release notes come
+from the CHANGELOG section for the version - that section is the single
+source of truth for the notes.
 
 ## One-time setup (maintainer)
 
@@ -93,7 +94,9 @@ in `CHANGELOG.md`. Run from a clean checkout of the default branch.
    npm view glab-axi version   # -> X.Y.Z
    ```
 
-   If the run failed at the publish step, the usual cause is a missing or expired
+   If the run failed at the build or test step, that's an unrelated code issue
+   to fix and re-release, not an `NPM_TOKEN` problem. If it got past those and
+   failed at the publish step, the usual cause is a missing or expired
    `NPM_TOKEN` secret (see one-time setup above).
 
 ## Notes
