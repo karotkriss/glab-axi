@@ -79,7 +79,7 @@ function buildApiArgs(path: string, opts: GlApiOptions): string[] {
  * JSON body (e.g. {"message":"..."}) lands on stdout — the error mapper needs
  * both to extract an actionable message and the HTTP code.
  */
-function errorBody(result: ExecResult): string {
+export function errorBody(result: ExecResult): string {
   return [result.stderr, result.stdout].filter(Boolean).join("\n");
 }
 

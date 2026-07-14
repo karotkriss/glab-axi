@@ -13,6 +13,8 @@ vi.mock("../src/gl.js", () => {
       if (!ctx) throw new Error("no project");
       return encodeURIComponent(ctx.project);
     },
+    errorBody: (result: { stderr: string; stdout: string }) =>
+      [result.stderr, result.stdout].filter(Boolean).join("\n"),
   };
 });
 
@@ -417,7 +419,20 @@ describe("mr list/view --json and --jq", () => {
       stderr: "404 Not Found",
       exitCode: 1,
     });
-    await expect(mrCommand(["view", "999", "--json"], ctx)).rejects.toThrow();
+    await expect(mrCommand(["view", "999", "--json"], ctx)).rejects.toThrow(
+      "Resource not found",
+    );
+  });
+
+  it("combines stdout and stderr for error mapping on the --json path", async () => {
+    glApiResultMock.mockResolvedValueOnce({
+      stdout: '{"message":"403 Forbidden"}',
+      stderr: "request failed",
+      exitCode: 1,
+    });
+    await expect(mrCommand(["view", "999", "--json"], ctx)).rejects.toThrow(
+      "403 Forbidden",
+    );
   });
 });
 

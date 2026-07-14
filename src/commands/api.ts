@@ -1,5 +1,5 @@
 import { encode } from "@toon-format/toon";
-import { glApiResult, projectId, type Json } from "../gl.js";
+import { glApiResult, projectId, errorBody, type Json } from "../gl.js";
 import { AxiError, mapGlError } from "../errors.js";
 import type { RepoContext } from "../context.js";
 import { getAllFlags, getFlag, hasFlag } from "../args.js";
@@ -195,7 +195,7 @@ export async function apiCommand(
   });
 
   if (result.exitCode !== 0) {
-    throw mapGlError(result.stderr || result.stdout, result.exitCode);
+    throw mapGlError(errorBody(result), result.exitCode);
   }
 
   // Escape hatches for callers that need to parse the response themselves,
