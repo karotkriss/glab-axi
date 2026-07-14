@@ -16,7 +16,8 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 
 ## Architecture
 
-- `src/gl.ts` - the only place that shells out. Targets GitLab through `glab api <path>` (REST passthrough), never per-subcommand flags. `glApi` (parsed JSON), `glRaw` (raw text, e.g. job traces), `glApiResult` (no-throw, for idempotent delete). Host is targeted via the `GITLAB_HOST` env var; the project is addressed by its URL-encoded path inside the REST path (`projects/<encoded>/...`).
+- `src/gl.ts` - the only place that shells out. Targets GitLab through `glab api <path>` (REST passthrough), never per-subcommand flags. `glApi` (parsed JSON), `glRaw` (raw text, e.g. job traces), `glApiResult` (no-throw, for idempotent delete). Host is targeted via the `GITLAB_HOST` env var; the project is addressed by its URL-encoded path inside the REST path (`projects/<encoded>/...`). One non-`glab` exception lives here: `runJq` pipes JSON through the system `jq` binary, backing `api --jq` (a missing binary returns `stderr === "ENOENT"`).
+- `api --jq <expr>` / `--raw` (alias `--json`) are opt-in escape hatches that operate on the RAW response (not the noise-stripped TOON view): `--jq` runs `jq -r`, `--raw` prints the JSON verbatim. Bare `api <path>` still emits stripped TOON.
 - **Never pass `-R` to `glab api`** - it rejects `-R`, and this previously broke `api` and `ci log` under `-R` targeting. The host goes through the env, the project through the path.
 - `src/context.ts` - `resolveRepo`: priority `--repo` flag > git remote origin. `GITLAB_HOST` only OVERRIDES the host; by itself it does not select a project. `-R` accepts `[host/]group/project`; a first segment containing a dot is treated as the host. Nested group paths are supported.
 - `src/commands/*.ts` - one file per domain (issue, mr, ci, project, label, release, search, api, home, setup). `mr.ts` is the reference template.
