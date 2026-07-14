@@ -538,6 +538,8 @@ describe("mr diff", () => {
     expect(out).toContain("merge_request_diff");
     expect(out).toContain("files_changed: 2");
     expect(out).toContain("diff --git a/new.ts b/new.ts");
+    expect(out).toContain("new file mode 100644");
+    expect(out).toContain("deleted file mode 100644");
     // new file: old side maps to /dev/null; deleted file: new side does.
     expect(out).toContain("--- /dev/null");
     expect(out).toContain("+++ /dev/null");
