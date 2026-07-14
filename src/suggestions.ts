@@ -192,6 +192,16 @@ const table: Entry[] = [
     },
   },
   {
+    match: (c) => c.domain === "ci" && c.action === "watch",
+    lines: (c) => {
+      const pid = c.id ?? "<pipeline-id>";
+      return [
+        `Run \`glab-axi${repoFlag(c)} ci view ${pid}\` to inspect the finished jobs`,
+        `Run \`glab-axi${repoFlag(c)} ci log <job-id>\` to see a failed job's log`,
+      ];
+    },
+  },
+  {
     match: (c) => c.domain === "ci" && c.action === "jobs",
     lines: (c) => [
       `Run \`glab-axi${repoFlag(c)} ci log <job-id>\` to see a job's log`,

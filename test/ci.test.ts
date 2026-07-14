@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Mock the gl executor so no real glab/network is touched.
 vi.mock("../src/gl.js", () => {
@@ -14,6 +14,11 @@ vi.mock("../src/gl.js", () => {
     },
   };
 });
+
+// Mock the delay so `ci watch` polls instantly instead of waiting real seconds.
+vi.mock("../src/sleep.js", () => ({
+  sleep: vi.fn().mockResolvedValue(undefined),
+}));
 
 import { ciCommand } from "../src/commands/ci.js";
 import { glApi, glRaw } from "../src/gl.js";
@@ -31,6 +36,12 @@ const PID = encodeURIComponent("group/project");
 beforeEach(() => {
   glApiMock.mockReset();
   glRawMock.mockReset();
+  // `ci watch` signals a failed pipeline via process.exitCode; keep tests isolated.
+  process.exitCode = 0;
+});
+
+afterEach(() => {
+  process.exitCode = 0;
 });
 
 function pipeline(overrides: Record<string, unknown> = {}) {
@@ -254,6 +265,58 @@ describe("ci status", () => {
 
   it("throws when neither --mr nor --branch is given", async () => {
     await expect(ciCommand(["status"], ctx)).rejects.toThrow(/--mr|--branch/);
+  });
+});
+
+describe("ci watch", () => {
+  it("blocks through running polls, returns on a terminal state, exits 0 on success", async () => {
+    glApiMock
+      .mockResolvedValueOnce(pipeline({ status: "running" })) // poll 1
+      .mockResolvedValueOnce(pipeline({ status: "running" })) // poll 2
+      .mockResolvedValueOnce(pipeline({ status: "success" })) // poll 3: terminal
+      .mockResolvedValueOnce([job({ status: "success" })]); // final jobs
+    const out = await ciCommand(["watch", "12345"], ctx);
+
+    // Polled the pipeline 3 times, then fetched jobs once.
+    expect(glApiMock.mock.calls.length).toBe(4);
+    expect(glApiMock.mock.calls[0][0]).toBe(`projects/${PID}/pipelines/12345`);
+    expect(glApiMock.mock.calls[3][0]).toBe(
+      `projects/${PID}/pipelines/12345/jobs`,
+    );
+    expect(out).toContain("status: success");
+    expect(out).toContain("verdict: passing");
+    expect(process.exitCode).toBe(0);
+  });
+
+  it("returns immediately when the pipeline is already terminal", async () => {
+    glApiMock
+      .mockResolvedValueOnce(pipeline({ status: "failed" }))
+      .mockResolvedValueOnce([job({ status: "failed", allow_failure: false })]);
+    const out = await ciCommand(["watch", "12345"], ctx);
+    expect(glApiMock.mock.calls.length).toBe(2);
+    expect(out).toContain("verdict: failing");
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("exit code follows the pipeline status, not the job verdict", async () => {
+    // A canceled pipeline whose recorded jobs all passed still exits non-zero.
+    glApiMock
+      .mockResolvedValueOnce(pipeline({ status: "canceled" }))
+      .mockResolvedValueOnce([job({ status: "success" })]);
+    const out = await ciCommand(["watch", "12345"], ctx);
+    expect(out).toContain("verdict: passing");
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("times out after the bounded number of polls and never spins forever", async () => {
+    // interval 5s / timeout 10s => at most 2 polls, both still running.
+    glApiMock
+      .mockResolvedValueOnce(pipeline({ status: "running" }))
+      .mockResolvedValueOnce(pipeline({ status: "running" }));
+    await expect(
+      ciCommand(["watch", "12345", "--interval", "5", "--timeout", "10"], ctx),
+    ).rejects.toThrow(/Timed out/);
+    expect(glApiMock.mock.calls.length).toBe(2);
   });
 });
 

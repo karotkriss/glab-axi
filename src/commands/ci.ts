@@ -3,8 +3,9 @@ import { glApi, glRaw, requireProject, type Json } from "../gl.js";
 import { AxiError } from "../errors.js";
 import type { RepoContext } from "../context.js";
 import { formatCountLine } from "../format.js";
-import { getSuggestions } from "../suggestions.js";
+import { getSuggestions, repoFlag } from "../suggestions.js";
 import { takeFlag, takeBoolFlag, takeNumber, parseLimit } from "../args.js";
+import { sleep } from "../sleep.js";
 import {
   field,
   lower,
@@ -51,6 +52,28 @@ function classifyJob(job: Json): Bucket {
     default:
       return "neutral";
   }
+}
+
+// ---------------------------------------------------------------------------
+// Pipeline terminal-state detection (for `ci watch`)
+// ---------------------------------------------------------------------------
+
+/**
+ * Pipeline statuses that mean "still going". We list the ACTIVE set rather than
+ * the terminal set on purpose: any status we don't recognize is then treated as
+ * terminal, so `ci watch` can never spin forever on a status GitLab adds later.
+ */
+const ACTIVE_PIPELINE_STATUSES = new Set([
+  "created",
+  "waiting_for_resource",
+  "preparing",
+  "pending",
+  "running",
+  "scheduled",
+]);
+
+function isPipelineTerminal(status: unknown): boolean {
+  return typeof status !== "string" || !ACTIVE_PIPELINE_STATUSES.has(status);
 }
 
 interface JobSummary {
@@ -135,20 +158,25 @@ function renderJobs(jobs: Json[]): string {
 // ---------------------------------------------------------------------------
 
 export const CI_HELP = `usage: glab-axi ci <subcommand> [flags]
-subcommands[6]:
-  list, view <id>, status, jobs <pipeline-id>, log <job-id>, retry <pipeline-id>
+subcommands[7]:
+  list, view <id>, status, jobs <pipeline-id>, watch <pipeline-id>, log <job-id>, retry <pipeline-id>
 flags{list}:
   --ref <branch>, --status <created|pending|running|success|failed|canceled|skipped|manual>, --limit <n> (default 20)
 flags{status}:
   --mr <iid> (pipeline for a merge request), --branch <b> (latest pipeline on a branch)
+flags{watch}:
+  --interval <seconds> (default 8), --timeout <seconds> (default 1800)
 flags{log}:
   --full (return the entire trace instead of the last 20000 chars)
+notes:
+  watch blocks until the pipeline finishes, prints the final verdict, and exits non-zero if it did not succeed.
 examples:
   glab-axi ci list --ref main --status failed
   glab-axi ci view 12345
   glab-axi ci status --mr 42
   glab-axi ci status --branch feature-1
   glab-axi ci jobs 12345
+  glab-axi ci watch 12345
   glab-axi ci log 67890
   glab-axi ci retry 12345`;
 
@@ -294,6 +322,73 @@ async function ciStatus(args: string[], ctx?: RepoContext): Promise<string> {
   ]);
 }
 
+const DEFAULT_WATCH_INTERVAL_SEC = 8;
+const DEFAULT_WATCH_TIMEOUT_SEC = 1800;
+
+/**
+ * Block until a pipeline reaches a terminal state, then print the same verdict
+ * aggregate `ci status` produces. Mirrors gh-axi `run watch`: a pipeline that
+ * did not succeed is a real failure the caller must act on, so we signal it with
+ * a non-zero exit code. The AXI SDK's only non-zero channel is a thrown error
+ * (which would replace the verdict output), so a failed-but-completed pipeline
+ * sets `process.exitCode` directly and still returns the verdict on stdout.
+ */
+async function ciWatch(args: string[], ctx?: RepoContext): Promise<string> {
+  const intervalSec = parseLimit(
+    takeFlag(args, "--interval"),
+    DEFAULT_WATCH_INTERVAL_SEC,
+  );
+  const timeoutSec = parseLimit(
+    takeFlag(args, "--timeout"),
+    DEFAULT_WATCH_TIMEOUT_SEC,
+  );
+  const pid = takeNumber(args, "pipeline");
+  const base = `projects/${requireProject(ctx)}/pipelines/${pid}`;
+
+  // ponytail: bound the loop by poll count (timeout / interval), not wall-clock.
+  // It can never spin forever and is deterministic to test; if a slow API pushes
+  // real elapsed past the timeout, the loop still terminates.
+  const maxPolls = Math.max(1, Math.ceil(timeoutSec / intervalSec));
+
+  let terminal: Json | undefined;
+  for (let poll = 0; poll < maxPolls; poll++) {
+    const pipeline = await glApi<Json>(base, { ctx });
+    if (isPipelineTerminal(pipeline?.status)) {
+      terminal = pipeline;
+      break;
+    }
+    if (poll < maxPolls - 1) await sleep(intervalSec * 1000);
+  }
+
+  if (!terminal) {
+    throw new AxiError(
+      `Timed out after ~${timeoutSec}s waiting for pipeline ${pid} to finish`,
+      "TIMEOUT",
+      [
+        `Run \`glab-axi${repoFlag({ domain: "ci", action: "watch", repo: ctx })} ci view ${pid}\` to check current status`,
+        "Increase the wait with `--timeout <seconds>`",
+      ],
+    );
+  }
+
+  const jobs = await fetchJobs(terminal.id, ctx);
+  if (terminal.status !== "success") process.exitCode = 1;
+
+  return renderOutput([
+    renderDetail("pipeline", terminal, pipelineDetailSchema),
+    renderSummary(jobs),
+    renderJobs(jobs),
+    renderHelp(
+      getSuggestions({
+        domain: "ci",
+        action: "watch",
+        id: terminal.id,
+        repo: ctx,
+      }),
+    ),
+  ]);
+}
+
 async function ciJobs(args: string[], ctx?: RepoContext): Promise<string> {
   const pid = takeNumber(args, "pipeline");
   const jobs = await fetchJobs(pid, ctx);
@@ -369,6 +464,8 @@ export async function ciCommand(
       return ciView(rest, ctx);
     case "status":
       return ciStatus(rest, ctx);
+    case "watch":
+      return ciWatch(rest, ctx);
     case "jobs":
       return ciJobs(rest, ctx);
     case "log":
