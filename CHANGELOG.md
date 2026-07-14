@@ -60,6 +60,3 @@ First published release.
 - `setup hooks` - idempotent `SessionStart` hooks for Claude Code, Codex, and OpenCode.
 - Installable Agent Skill generated from the CLI's own help, with a CI freshness check.
 - Generic host/project targeting via `-R [host/]group/project`, the `origin` git remote, or `GITLAB_HOST` (host-only override).
-
-[Unreleased]: https://github.com/karotkriss/glab-axi/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/karotkriss/glab-axi/releases/tag/v0.1.0
