@@ -57,7 +57,7 @@ Every response ends with `help:` hints for logical next steps. Run `glab-axi --h
 |-----------|--------------|
 | (none)    | Dashboard of the current project |
 | `issue`   | list / view / create / edit / close / reopen / comment |
-| `mr`      | list / view / create / update / merge / approve / comment (by IID) |
+| `mr`      | list / view / create / update / merge / approve / checks / comment (by IID; `view` and `checks` also take a full MR URL) |
 | `ci`      | list / view / status / jobs / log / retry (pipelines) |
 | `project` | view / list |
 | `label`   | list / create / delete |
@@ -76,6 +76,8 @@ Issues and merge requests are addressed by their project-scoped **IID** (the num
 2. The `origin` git remote of the current repository.
 
 `GITLAB_HOST` **overrides only the host** of an already-resolved project; on its own it does not select a project (there is no namespace to infer from a bare hostname).
+
+`mr view` and `mr checks` also accept a full merge request URL in place of the IID (e.g. `glab-axi mr view https://gitlab.example.com/group/project/-/merge_requests/42`); the URL's own host/project target the request, unless an explicit `-R` flag overrides it.
 
 ```sh
 # explicit host + project

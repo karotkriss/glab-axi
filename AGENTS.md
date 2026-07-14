@@ -20,6 +20,8 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - **Never pass `-R` to `glab api`** - it rejects `-R`, and this previously broke `api` and `ci log` under `-R` targeting. The host goes through the env, the project through the path.
 - `src/context.ts` - `resolveRepo`: priority `--repo` flag > git remote origin. `GITLAB_HOST` only OVERRIDES the host; by itself it does not select a project. `-R` accepts `[host/]group/project`; a first segment containing a dot is treated as the host. Nested group paths are supported.
 - `src/commands/*.ts` - one file per domain (issue, mr, ci, project, label, release, search, api, home, setup). `mr.ts` is the reference template.
+- `mr view`/`mr checks` accept a full MR URL in place of the IID; the URL's own host/project target the request (precedence: `-R` flag > URL > git remote), tagged `source: "flag"` so it flows through to help suggestions like an explicit `-R`.
+- `mr checks` reuses `ci.ts`'s exported `resolveMrPipeline`/`fetchJobs`/`renderSummary` rather than reimplementing verdict bucketing - intentional cross-command reuse.
 - IID-addressed: issues and merge requests use their project-scoped IID (the number in the URL), not the global id.
 - `glab` field flags are inverted from `gh`: `-F`/`--field` = typed, `-f`/`--raw-field` = raw string. In `GlApiOptions`, `fields` -> `-F` (ids/booleans), `rawFields` -> `-f` (user text: titles, bodies, labels).
 
