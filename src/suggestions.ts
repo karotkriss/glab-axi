@@ -147,6 +147,13 @@ const table: Entry[] = [
     ],
   },
   {
+    match: (c) => c.domain === "mr" && c.action === "checks",
+    lines: (c) => [
+      `Run \`glab-axi${repoFlag(c)} ci status --mr ${c.id}\` for the full pipeline and jobs`,
+      `Run \`glab-axi${repoFlag(c)} mr view ${c.id} --full\` for merge status and head SHA`,
+    ],
+  },
+  {
     match: (c) =>
       c.domain === "mr" &&
       (c.action === "update" ||

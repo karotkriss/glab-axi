@@ -1,6 +1,7 @@
 import { glApi, projectId, requireProject, type Json } from "../gl.js";
 import { AxiError } from "../errors.js";
 import type { RepoContext } from "../context.js";
+import { resolveMrPipeline, fetchJobs, renderSummary } from "./ci.js";
 import { takeBody, truncateBody } from "../body.js";
 import { formatCountLine } from "../format.js";
 import { getSuggestions, repoFlag } from "../suggestions.js";
@@ -66,6 +67,36 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+const MR_URL_RE = /\/-\/merge_requests\/(\d+)/;
+
+/** Extract {host, project} from a full MR URL, or undefined if it isn't one. */
+function parseMrUrl(raw: string): RepoContext | undefined {
+  const m = raw.match(/^https?:\/\/([^/]+)\/(.+?)\/-\/merge_requests\/\d+/);
+  if (!m) return undefined;
+  return { host: m[1], project: m[2], source: "flag" };
+}
+
+/**
+ * Resolve the MR reference from args: a bare IID, or a full MR URL
+ * (https://<host>/<group>/<project>/-/merge_requests/<iid>). A URL also carries
+ * its own host/project, which targets the request unless an explicit `-R` flag
+ * was given (precedence: `-R` flag > URL > git remote).
+ */
+function resolveMrRef(
+  args: string[],
+  ctx?: RepoContext,
+): { iid: number; ctx?: RepoContext } {
+  const urlIdx = args.findIndex((a) => MR_URL_RE.test(a));
+  if (urlIdx !== -1) {
+    const raw = args.splice(urlIdx, 1)[0];
+    const iid = Number(raw.match(MR_URL_RE)![1]);
+    const fromUrl = parseMrUrl(raw);
+    const target = ctx?.source === "flag" ? ctx : (fromUrl ?? ctx);
+    return { iid, ctx: target };
+  }
+  return { iid: takeNumber(args, "merge request"), ctx };
+}
+
 // ---------------------------------------------------------------------------
 // Schemas
 // ---------------------------------------------------------------------------
@@ -118,6 +149,9 @@ function viewSchema(full: boolean, includeComments: boolean): FieldDef[] {
   ];
   if (full) {
     base.push(
+      // Source/head SHA - the commit firstmate's merge-poll and teardown
+      // containment check verify against (gh-axi `pr view --json headRefOid`).
+      custom("head_sha", (m) => m.sha ?? m.diff_refs?.head_sha ?? ""),
       custom("has_conflicts", (m) => (m.has_conflicts ? "yes" : "no")),
       custom("pipeline", (m) => m.head_pipeline?.status ?? "none"),
     );
@@ -150,12 +184,12 @@ function viewSchema(full: boolean, includeComments: boolean): FieldDef[] {
 // ---------------------------------------------------------------------------
 
 export const MR_HELP = `usage: glab-axi mr <subcommand> [flags]
-subcommands[7]:
-  list, view <iid>, create, update <iid>, merge <iid>, approve <iid>, comment <iid>
+subcommands[8]:
+  list, view <iid|url>, create, update <iid>, merge <iid>, approve <iid>, checks <iid|url>, comment <iid>
 flags{list}:
-  --state <opened|closed|merged|all>, --source-branch <b>, --target-branch <b>, --label, --author <user>, --assignee <user>, --milestone <name>, --draft, --limit <n> (default 30), --fields <a,b,c>
+  --state <opened|closed|merged|all>, --source-branch/--head <b>, --target-branch/--base <b>, --label, --author <user>, --assignee <user>, --milestone <name>, --draft, --limit <n> (default 30), --fields <a,b,c>
 flags{view}:
-  --comments (include discussion notes), --full (merge status, pipeline, full body)
+  --comments (include discussion notes), --full (head SHA, merge status, pipeline, full body); accepts an MR URL in place of the iid
 flags{create}:
   --title <text> (required), --source-branch <b> (required), --target-branch <b> (default: project default), --body <text> or --body-file <path>, --assignee <user>, --reviewer <user>, --label <a,b>, --milestone <name>, --draft, --remove-source-branch, --squash
 flags{update}:
@@ -164,11 +198,15 @@ flags{merge}:
   --method <merge|squash|rebase>, --merge, --squash, --rebase, --remove-source-branch, --body or --body-file (merge commit message)
 flags{approve}:
   (none)
+flags{checks}:
+  (none) - prints the MR pipeline's aggregate pass/fail/running counts + verdict
 flags{comment}:
   --body <text> or --body-file <path> (required)
 examples:
-  glab-axi mr list --state opened --source-branch feature-1
+  glab-axi mr list --state all --head feature-1 --limit 1
   glab-axi mr view 42 --full
+  glab-axi mr view https://gitlab.example.com/group/project/-/merge_requests/42 --full
+  glab-axi mr checks 42
   glab-axi mr create --title "Add X" --source-branch feat --target-branch main
   glab-axi mr merge 42 --squash --remove-source-branch
   glab-axi mr update 42 --ready`;
@@ -181,8 +219,11 @@ async function mrList(args: string[], ctx?: RepoContext): Promise<string> {
   const fieldsArg = takeFlag(args, "--fields");
   const { extraDefs } = parseFields(fieldsArg, LIST_EXTRA_FIELDS);
   const state = mapState(takeFlag(args, "--state"));
-  const sourceBranch = takeFlag(args, "--source-branch");
-  const targetBranch = takeFlag(args, "--target-branch");
+  // --head/--base are gh-axi-compatible aliases for --source-branch/--target-branch.
+  const sourceBranch =
+    takeFlag(args, "--source-branch") ?? takeFlag(args, "--head");
+  const targetBranch =
+    takeFlag(args, "--target-branch") ?? takeFlag(args, "--base");
   const label = takeFlag(args, "--label");
   const author = takeFlag(args, "--author");
   const assignee = takeFlag(args, "--assignee");
@@ -232,14 +273,14 @@ async function mrList(args: string[], ctx?: RepoContext): Promise<string> {
 async function mrView(args: string[], ctx?: RepoContext): Promise<string> {
   const includeComments = takeBoolFlag(args, "--comments");
   const full = takeBoolFlag(args, "--full");
-  const iid = takeNumber(args, "merge request");
-  const mr = await glApi<Json>(mrPath(ctx, iid), { ctx });
+  const { iid, ctx: target } = resolveMrRef(args, ctx);
+  const mr = await glApi<Json>(mrPath(target, iid), { ctx: target });
 
   const schema = viewSchema(full, includeComments);
   if (includeComments) {
     const notes = await glApi<Json[]>(
-      `${mrPath(ctx, iid, "/notes")}?per_page=100&sort=asc`,
-      { ctx },
+      `${mrPath(target, iid, "/notes")}?per_page=100&sort=asc`,
+      { ctx: target },
     );
     const real = (notes ?? []).filter((n) => !n.system);
     schema.push(
@@ -260,7 +301,7 @@ async function mrView(args: string[], ctx?: RepoContext): Promise<string> {
         action: "view",
         id: iid,
         state: mr.state,
-        repo: ctx,
+        repo: target,
       }),
     ),
   ]);
@@ -679,6 +720,27 @@ async function mrComment(args: string[], ctx?: RepoContext): Promise<string> {
   ]);
 }
 
+/**
+ * `mr checks <iid|url>` — the gh-axi `pr checks` read: the pipeline's aggregate
+ * pass/fail/running counts + verdict, keyed on the MR. A thin wrapper over the
+ * shared `ci status --mr` pipeline resolution and verdict bucketing.
+ */
+async function mrChecks(args: string[], ctx?: RepoContext): Promise<string> {
+  const { iid, ctx: target } = resolveMrRef(args, ctx);
+  const pipeline = await resolveMrPipeline(iid, target);
+  const help = renderHelp(
+    getSuggestions({ domain: "mr", action: "checks", id: iid, repo: target }),
+  );
+  if (!pipeline) {
+    return renderOutput([
+      `checks: no pipeline found for merge request ${iid}`,
+      help,
+    ]);
+  }
+  const jobs = await fetchJobs(pipeline.id, target);
+  return renderOutput([renderSummary(jobs), help]);
+}
+
 // ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
@@ -703,6 +765,8 @@ export async function mrCommand(
       return mrMerge(rest, ctx);
     case "approve":
       return mrApprove(rest, ctx);
+    case "checks":
+      return mrChecks(rest, ctx);
     case "comment":
       return mrComment(rest, ctx);
     case "--help":
