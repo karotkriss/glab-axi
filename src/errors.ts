@@ -60,6 +60,19 @@ const patterns: ErrorPattern[] = [
     code: "VALIDATION_ERROR",
     message: (_m, body) => extractApiMessage(body) ?? "Validation error",
   },
+  {
+    // The glab Go client fails to unmarshal a structured (object-valued)
+    // GitLab error body into its string `.Message` field, so no HTTP-status
+    // text ever reaches the patterns above; this reliably indicates GitLab
+    // rejected the request with a 400-family validation error.
+    pattern: /unmarshal .*into Go struct field .*\.Message of type string/i,
+    code: "VALIDATION_ERROR",
+    message: () => "GitLab rejected the request as invalid",
+    suggestions: () => [
+      "Re-check the values you supplied against GitLab's validation rules",
+      "For example, masked CI/CD variable values must be at least 8 characters, contain no whitespace, and use the base64 alphabet",
+    ],
+  },
 ];
 
 /** Pull a human message out of a GitLab JSON error body. */
