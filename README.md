@@ -83,7 +83,7 @@ Issues and merge requests are addressed by their project-scoped **IID** (the num
 
 `mr view`, `mr checks`, and `mr diff` also accept a full merge request URL in place of the IID (e.g. `glab-axi mr view https://gitlab.example.com/group/project/-/merge_requests/42`); the URL's own host/project target the request, unless an explicit `-R` flag overrides it.
 
-`mr view --reviews` adds approval state (who approved, approvals given/required) and discussion-thread resolution counts. `mr diff` prints a bounded per-file summary (path, status, `+`/`-` line counts) by default; `--full` emits the complete reconstructed unified diff.
+`mr view --reviews` adds approval state (who approved, approvals given/required) and discussion-thread resolution counts. `mr diff` prints a bounded per-file summary (path, status, `+`/`-` line counts) by default; `--full` emits the complete reconstructed unified diff. `mr merge --auto` sets GitLab's merge-when-pipeline-succeeds: it merges immediately if there is no pipeline (or it already passed), otherwise it defers and reports the scheduled state instead of a merge commit SHA; it cannot combine with `--rebase`. `mr list` and `mr view` accept the same `--jq`/`--json` escape hatches as `api` (see below).
 
 ```sh
 # explicit host + project
@@ -112,6 +112,13 @@ glab-axi api projects/{project} --raw | jq .default_branch
 ```
 
 `--jq <expr>` applies a jq expression (raw output, like `jq -r`) and needs the `jq` binary on `PATH`; `--raw` (alias `--json`) prints the JSON response verbatim and needs nothing. When both are passed, `--jq` wins.
+
+`mr list` and `mr view` expose the same `--jq`/`--json` flags, operating on GitLab's raw response and bypassing schema flags like `--full`/`--comments`/`--reviews`:
+
+```sh
+glab-axi mr view 42 --jq .detailed_merge_status
+glab-axi mr list --state opened --jq '.[].iid'
+```
 
 ## Ambient context for agents (two ways - pick one or both)
 
