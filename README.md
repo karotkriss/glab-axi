@@ -44,6 +44,7 @@ Drill in command-first:
 ```sh
 glab-axi issue list --state opened
 glab-axi issue view 12 --comments
+glab-axi issue links 12
 glab-axi mr view 42 --full
 glab-axi mr view 42 --reviews
 glab-axi mr diff 42
@@ -58,7 +59,7 @@ Every response ends with `help:` hints for logical next steps. Run `glab-axi --h
 | Command   | What it does |
 |-----------|--------------|
 | (none)    | Dashboard of the current project |
-| `issue`   | list / view / create / edit / close / reopen / comment |
+| `issue`   | list / view / links / create / edit / close / reopen / comment |
 | `mr`      | list / view / create / update / merge / approve / checks / diff / comment (by IID; `view`, `checks`, and `diff` also take a full MR URL) |
 | `ci`      | list / view / status / jobs / watch / log / retry (pipelines; `watch` blocks until a pipeline finishes and exits non-zero if it did not succeed) |
 | `project` | view / list |
