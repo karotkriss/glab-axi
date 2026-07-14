@@ -155,6 +155,16 @@ npm run skill:check            # fail if SKILL.md is stale
 
 Architecture notes live in [`AGENTS.md`](./AGENTS.md). The short version: every shell-out goes through `src/gl.ts`, which targets GitLab via `glab api` (REST passthrough) - the host through `GITLAB_HOST`, the project through its URL-encoded path. `src/commands/mr.ts` is the reference template for the per-domain command files.
 
+## Releasing
+
+Every notable change is recorded under `## [Unreleased]` in [`CHANGELOG.md`](./CHANGELOG.md), following the [Keep a Changelog](https://keepachangelog.com/) convention.
+
+Publishing is automated. When a **GitHub release is published**, [`.github/workflows/release.yml`](./.github/workflows/release.yml) builds and runs `npm publish --provenance`. Nothing publishes on a plain push or tag - only on a published release. The release's notes are sourced from the matching `CHANGELOG.md` section, which is the single source of truth for what shipped.
+
+The full step-by-step (move Unreleased to a new version, bump `package.json`, tag, create the release, verify the publish) lives in the `glab-axi-release` skill under [`skills/glab-axi-release/`](./skills/glab-axi-release/SKILL.md).
+
+> **One-time setup (required):** the publish step authenticates with an `NPM_TOKEN` **repository secret** that a maintainer must add manually at GitHub -> Settings -> Secrets and variables -> Actions -> New repository secret. Use an npm automation token with publish rights. Until it exists, every release run fails at the publish step.
+
 ## License
 
 [MIT](./LICENSE) (c) Christopher McKay

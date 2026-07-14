@@ -42,6 +42,12 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - Mutations are idempotent: GET current state first; if already in the target state, return a no-op (exit 0). Delete-on-404 is a no-op.
 - Structured errors must never leak the wrapped CLI's name - `scrubTool()` in `src/errors.ts` strips it; "GitLab" (the product) is fine.
 
+## Releasing
+
+- Every change adds an entry under `## [Unreleased]` in `CHANGELOG.md` (Keep a Changelog format). That section is the single source of truth for a version's GitHub release notes.
+- Publishing is automated: `.github/workflows/release.yml` runs `npm publish --provenance` on `release: [published]` only (not on push/tag). Auth is the `NPM_TOKEN` repo secret (maintainer adds it once).
+- The end-to-end cut-a-release procedure (CHANGELOG move, version bump file list, tag, `gh release create` with notes extracted from the CHANGELOG section, verify via `npm view glab-axi version`) lives in the `glab-axi-release` skill (`skills/glab-axi-release/SKILL.md`) - follow it rather than reinventing the steps.
+
 ## Targeting a self-hosted instance
 
 The tool is fully generic. Point it at any self-hosted GitLab with `GITLAB_HOST=<host>` (or `-R <host>/group/project`, or a git remote on that host). Do not hardcode any host anywhere.
