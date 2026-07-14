@@ -30,7 +30,7 @@ const table: Entry[] = [
   {
     match: (c) => c.domain === "home",
     lines: () => [
-      "Run `glab-axi <command> <subcommand>` — commands: issue, mr, ci, project, label, release, search, api",
+      "Run `glab-axi <command> <subcommand>` — commands: issue, mr, ci, project, label, variable, secret, release, search, api",
     ],
   },
 
@@ -254,6 +254,71 @@ const table: Entry[] = [
       c.domain === "label" && (c.action === "create" || c.action === "delete"),
     lines: (c) => [
       `Run \`glab-axi${repoFlag(c)} label list\` to see all labels`,
+    ],
+  },
+
+  // ---- variable ----
+  {
+    match: (c) => c.domain === "variable" && c.action === "list" && !c.isEmpty,
+    lines: (c) => [
+      `Run \`glab-axi${repoFlag(c)} variable get <name>\` to see a variable's value`,
+      `Run \`glab-axi${repoFlag(c)} variable set <name> --value "..."\` to set one`,
+    ],
+  },
+  {
+    match: (c) =>
+      c.domain === "variable" && c.action === "list" && c.isEmpty === true,
+    lines: (c) => [
+      `Run \`glab-axi${repoFlag(c)} variable set <name> --value "..."\` to create a variable`,
+      `Run \`glab-axi${repoFlag(c)} secret list\` to see masked CI/CD variables`,
+    ],
+  },
+  {
+    match: (c) => c.domain === "variable" && c.action === "get",
+    lines: (c) => [
+      `Run \`glab-axi${repoFlag(c)} variable set ${c.id} --value "..."\` to update it`,
+      `Run \`glab-axi${repoFlag(c)} variable delete ${c.id}\` to delete it`,
+    ],
+  },
+  {
+    match: (c) => c.domain === "variable" && c.action === "set",
+    lines: (c) => [
+      `Run \`glab-axi${repoFlag(c)} variable get ${c.id}\` to confirm the value`,
+      `Run \`glab-axi${repoFlag(c)} variable list\` to see all variables`,
+    ],
+  },
+  {
+    match: (c) => c.domain === "variable" && c.action === "delete",
+    lines: (c) => [
+      `Run \`glab-axi${repoFlag(c)} variable list\` to see remaining variables`,
+    ],
+  },
+
+  // ---- secret ----
+  {
+    match: (c) => c.domain === "secret" && c.action === "list" && !c.isEmpty,
+    lines: (c) => [
+      `Run \`glab-axi${repoFlag(c)} secret set <name> --value "..."\` to set a masked secret`,
+    ],
+  },
+  {
+    match: (c) =>
+      c.domain === "secret" && c.action === "list" && c.isEmpty === true,
+    lines: (c) => [
+      `Run \`glab-axi${repoFlag(c)} secret set <name> --value "..."\` to create a masked secret`,
+      `Run \`glab-axi${repoFlag(c)} variable list\` to see plain CI/CD variables`,
+    ],
+  },
+  {
+    match: (c) => c.domain === "secret" && c.action === "set",
+    lines: (c) => [
+      `Run \`glab-axi${repoFlag(c)} secret list\` to see all secrets`,
+    ],
+  },
+  {
+    match: (c) => c.domain === "secret" && c.action === "delete",
+    lines: (c) => [
+      `Run \`glab-axi${repoFlag(c)} secret list\` to see remaining secrets`,
     ],
   },
 

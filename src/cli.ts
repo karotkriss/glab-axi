@@ -9,6 +9,8 @@ import { mrCommand, MR_HELP } from "./commands/mr.js";
 import { ciCommand, CI_HELP } from "./commands/ci.js";
 import { projectCommand, PROJECT_HELP } from "./commands/project.js";
 import { labelCommand, LABEL_HELP } from "./commands/label.js";
+import { variableCommand, VARIABLE_HELP } from "./commands/variable.js";
+import { secretCommand, SECRET_HELP } from "./commands/secret.js";
 import { releaseCommand, RELEASE_HELP } from "./commands/release.js";
 import { searchCommand, SEARCH_HELP } from "./commands/search.js";
 import { apiCommand, API_HELP } from "./commands/api.js";
@@ -20,8 +22,8 @@ export const DESCRIPTION =
 const VERSION = readPackageVersion();
 
 export const TOP_HELP = `usage: glab-axi [command] [args] [flags]
-commands[10]:
-  (none)=dashboard, issue, mr, ci, project, label, release, search, api, setup
+commands[12]:
+  (none)=dashboard, issue, mr, ci, project, label, variable, secret, release, search, api, setup
 flags[3]:
   -R/--repo <[host/]group/project> (after command), accepts space or equals form, --help, -v/-V/--version
 notes:
@@ -42,6 +44,8 @@ const COMMAND_HELP: Record<string, string> = {
   ci: CI_HELP,
   project: PROJECT_HELP,
   label: LABEL_HELP,
+  variable: VARIABLE_HELP,
+  secret: SECRET_HELP,
   release: RELEASE_HELP,
   search: SEARCH_HELP,
   api: API_HELP,
@@ -56,6 +60,8 @@ const RAW_COMMANDS: Record<string, Cmd> = {
   ci: ciCommand,
   project: projectCommand,
   label: labelCommand,
+  variable: variableCommand,
+  secret: secretCommand,
   release: releaseCommand,
   search: searchCommand,
   api: apiCommand,
