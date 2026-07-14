@@ -29,8 +29,8 @@ Use glab-axi whenever a task touches GitLab: listing, filing, or editing issues;
 ## Commands
 
 ```
-commands[12]:
-  (none)=dashboard, issue, mr, ci, project, label, variable, secret, release, search, api, setup
+commands[13]:
+  (none)=dashboard, issue, mr, ci, project, repo, label, variable, secret, release, search, api, setup
 ```
 
 Run `npx -y glab-axi --help` for global flags, or `npx -y glab-axi <command> --help` for per-command usage.

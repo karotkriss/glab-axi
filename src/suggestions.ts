@@ -30,7 +30,7 @@ const table: Entry[] = [
   {
     match: (c) => c.domain === "home",
     lines: () => [
-      "Run `glab-axi <command> <subcommand>` — commands: issue, mr, ci, project, label, variable, secret, release, search, api",
+      "Run `glab-axi <command> <subcommand>` — commands: issue, mr, ci, project, repo, label, variable, secret, release, search, api",
     ],
   },
 
@@ -252,7 +252,28 @@ const table: Entry[] = [
     match: (c) => c.domain === "project" && c.action === "create",
     lines: (c) => [
       `Run \`glab-axi project view -R ${c.id}\` to view the new project`,
-      `Run \`glab-axi mr list -R ${c.id}\` to see its merge requests`,
+      `Run \`glab-axi repo create-file README.md -R ${c.id} --content "..."\` to seed its repository`,
+    ],
+  },
+  {
+    match: (c) => c.domain === "project" && c.action === "delete",
+    // No -R carry-forward: it would name the project that no longer exists.
+    lines: () => ["Run `glab-axi project list` to see your remaining projects"],
+  },
+
+  // ---- repo ----
+  {
+    match: (c) => c.domain === "repo" && c.action === "create-file",
+    lines: (c) => [
+      `Run \`glab-axi${repoFlag(c)} repo create-branch <name> --ref ${c.branch}\` to branch from this commit`,
+      `Run \`glab-axi${repoFlag(c)} ci list --ref ${c.branch}\` to see the pipeline it triggered`,
+    ],
+  },
+  {
+    match: (c) => c.domain === "repo" && c.action === "create-branch",
+    lines: (c) => [
+      `Run \`glab-axi${repoFlag(c)} repo create-file <path> --branch ${c.id} --content "..."\` to add a file to it`,
+      `Run \`glab-axi${repoFlag(c)} mr create --source-branch ${c.id} --title "..."\` to open a merge request`,
     ],
   },
 
