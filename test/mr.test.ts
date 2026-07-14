@@ -69,6 +69,18 @@ describe("mr list", () => {
     expect(glApiMock.mock.calls[0][0]).toContain("source_branch=feature");
   });
 
+  it("accepts --head as an alias for --source-branch", async () => {
+    glApiMock.mockResolvedValueOnce([mr()]);
+    await mrCommand(["list", "--head", "feature"], ctx);
+    expect(glApiMock.mock.calls[0][0]).toContain("source_branch=feature");
+  });
+
+  it("accepts --base as an alias for --target-branch", async () => {
+    glApiMock.mockResolvedValueOnce([mr()]);
+    await mrCommand(["list", "--base", "main"], ctx);
+    expect(glApiMock.mock.calls[0][0]).toContain("target_branch=main");
+  });
+
   it("maps --state open to opened and all drops the filter", async () => {
     glApiMock.mockResolvedValueOnce([]);
     await mrCommand(["list", "--state", "all"], ctx);
@@ -114,6 +126,49 @@ describe("mr view", () => {
     const out = await mrCommand(["view", "42", "--full"], ctx);
     expect(out).toContain("merge_status: mergeable");
     expect(out).toContain("pipeline: success");
+  });
+
+  it("--full exposes the head SHA from `sha`", async () => {
+    glApiMock.mockResolvedValueOnce(mr({ sha: "abc1234def" }));
+    const out = await mrCommand(["view", "42", "--full"], ctx);
+    expect(out).toContain("head_sha: abc1234def");
+  });
+
+  it("--full falls back to diff_refs.head_sha for the head SHA", async () => {
+    glApiMock.mockResolvedValueOnce(
+      mr({ sha: undefined, diff_refs: { head_sha: "fromdiffrefs" } }),
+    );
+    const out = await mrCommand(["view", "42", "--full"], ctx);
+    expect(out).toContain("head_sha: fromdiffrefs");
+  });
+
+  it("emits a machine-readable state", async () => {
+    glApiMock.mockResolvedValueOnce(mr({ state: "merged" }));
+    const out = await mrCommand(["view", "42"], ctx);
+    expect(out).toContain("state: merged");
+  });
+
+  it("resolves an MR URL to its iid", async () => {
+    glApiMock.mockResolvedValueOnce(mr());
+    await mrCommand(
+      ["view", "https://gitlab.example.com/group/project/-/merge_requests/42"],
+      ctx,
+    );
+    expect(glApiMock.mock.calls[0][0]).toBe(
+      `projects/${PID}/merge_requests/42`,
+    );
+  });
+
+  it("derives project/host from the URL when no -R flag is given", async () => {
+    glApiMock.mockResolvedValueOnce(mr());
+    // No ctx: the URL's own namespace must target the request.
+    await mrCommand([
+      "view",
+      "https://gitlab.example.com/team/sub/app/-/merge_requests/7",
+    ]);
+    expect(glApiMock.mock.calls[0][0]).toBe(
+      `projects/${encodeURIComponent("team/sub/app")}/merge_requests/7`,
+    );
   });
 
   it("--comments fetches notes and filters system notes", async () => {
@@ -325,6 +380,57 @@ describe("mr approve / comment", () => {
     await mrCommand(["comment", "42", "--body", "hi"], ctx);
     expect(glApiMock.mock.calls[0][0]).toContain("/notes");
     expect(glApiMock.mock.calls[0][1].rawFields).toContain("body=hi");
+  });
+});
+
+describe("mr checks", () => {
+  it("renders the aggregate pass/fail counts + verdict for the MR pipeline", async () => {
+    glApiMock.mockResolvedValueOnce(
+      mr({ head_pipeline: { id: 999, status: "failed" } }),
+    ); // GET mr
+    glApiMock.mockResolvedValueOnce([
+      { status: "success" },
+      { status: "success" },
+      { status: "failed", allow_failure: false },
+    ]); // jobs
+    const out = await mrCommand(["checks", "42"], ctx);
+    expect(out).toContain("checks: 2 passed, 1 failed");
+    expect(out).toContain("verdict: failing");
+    // Jobs fetched from the head pipeline's id.
+    expect(glApiMock.mock.calls[1][0]).toContain("/pipelines/999/jobs");
+  });
+
+  it("counts running jobs and reports a running verdict", async () => {
+    glApiMock.mockResolvedValueOnce(
+      mr({ head_pipeline: { id: 5, status: "running" } }),
+    );
+    glApiMock.mockResolvedValueOnce([
+      { status: "success" },
+      { status: "running" },
+    ]);
+    const out = await mrCommand(["checks", "42"], ctx);
+    expect(out).toContain("checks: 1 passed, 0 failed, 1 running");
+    expect(out).toContain("verdict: running");
+  });
+
+  it("falls back to the MR's pipelines list when there is no head pipeline", async () => {
+    glApiMock.mockResolvedValueOnce(mr({ head_pipeline: null })); // GET mr
+    glApiMock.mockResolvedValueOnce([{ id: 77, status: "success" }]); // GET .../pipelines
+    glApiMock.mockResolvedValueOnce([{ status: "success" }]); // jobs
+    const out = await mrCommand(["checks", "42"], ctx);
+    expect(glApiMock.mock.calls[1][0]).toContain(
+      "/merge_requests/42/pipelines",
+    );
+    expect(glApiMock.mock.calls[2][0]).toContain("/pipelines/77/jobs");
+    expect(out).toContain("checks: 1 passed, 0 failed");
+    expect(out).toContain("verdict: passing");
+  });
+
+  it("gives a definitive message when the MR has no pipeline", async () => {
+    glApiMock.mockResolvedValueOnce(mr({ head_pipeline: null })); // GET mr
+    glApiMock.mockResolvedValueOnce([]); // GET .../pipelines (empty)
+    const out = await mrCommand(["checks", "42"], ctx);
+    expect(out).toContain("no pipeline found for merge request 42");
   });
 });
 

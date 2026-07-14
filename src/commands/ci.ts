@@ -91,7 +91,7 @@ function summarizeJobs(jobs: Json[]): JobSummary {
 }
 
 /** Render the at-a-glance summary + verdict lines (the GetChecks header). */
-function renderSummary(jobs: Json[]): string {
+export function renderSummary(jobs: Json[]): string {
   const s = summarizeJobs(jobs);
   let checks = `checks: ${s.passed} passed, ${s.failed} failed`;
   if (s.running > 0) checks += `, ${s.running} running`;
@@ -206,11 +206,35 @@ async function ciView(args: string[], ctx?: RepoContext): Promise<string> {
   ]);
 }
 
-async function fetchJobs(pid: number, ctx?: RepoContext): Promise<Json[]> {
+export async function fetchJobs(
+  pid: number,
+  ctx?: RepoContext,
+): Promise<Json[]> {
   return glApi<Json[]>(
     `projects/${requireProject(ctx)}/pipelines/${pid}/jobs`,
     { ctx },
   );
+}
+
+/**
+ * Resolve the pipeline for a merge request: its head pipeline when present,
+ * otherwise the most recent pipeline the MR ran. Returns undefined when the MR
+ * has no pipeline at all. Shared by `ci status --mr` and `mr checks`.
+ */
+export async function resolveMrPipeline(
+  mrIid: string | number,
+  ctx?: RepoContext,
+): Promise<Json | undefined> {
+  const mr = await glApi<Json>(
+    `projects/${requireProject(ctx)}/merge_requests/${mrIid}`,
+    { ctx },
+  );
+  if (mr.head_pipeline) return mr.head_pipeline;
+  const pipes = await glApi<Json[]>(
+    `projects/${requireProject(ctx)}/merge_requests/${mrIid}/pipelines`,
+    { ctx },
+  );
+  return pipes?.[0];
 }
 
 async function ciStatus(args: string[], ctx?: RepoContext): Promise<string> {
@@ -220,19 +244,7 @@ async function ciStatus(args: string[], ctx?: RepoContext): Promise<string> {
   let pipeline: Json | undefined;
 
   if (mrIid) {
-    const mr = await glApi<Json>(
-      `projects/${requireProject(ctx)}/merge_requests/${mrIid}`,
-      { ctx },
-    );
-    if (mr.head_pipeline) {
-      pipeline = mr.head_pipeline;
-    } else {
-      const pipes = await glApi<Json[]>(
-        `projects/${requireProject(ctx)}/merge_requests/${mrIid}/pipelines`,
-        { ctx },
-      );
-      pipeline = pipes?.[0];
-    }
+    pipeline = await resolveMrPipeline(mrIid, ctx);
     if (!pipeline) {
       return renderOutput([
         `pipeline: no pipeline found for merge request ${mrIid}`,
