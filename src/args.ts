@@ -68,6 +68,25 @@ export function getAllFlags(args: string[], flag: string): string[] {
   return result;
 }
 
+/** Collect all values for a repeatable flag and remove each matched token from args. */
+export function takeAllFlags(args: string[], flag: string): string[] {
+  const result: string[] = [];
+  const equalsPrefix = flagEqualsPrefix(flag);
+  for (let i = 0; i < args.length; ) {
+    const arg = args[i];
+    if (arg === flag && i + 1 < args.length) {
+      result.push(args[i + 1]);
+      args.splice(i, 2);
+    } else if (arg.startsWith(equalsPrefix)) {
+      result.push(arg.slice(equalsPrefix.length));
+      args.splice(i, 1);
+    } else {
+      i++;
+    }
+  }
+  return result;
+}
+
 /** Get the first positional arg (non-flag) starting from startIndex. */
 export function getPositional(
   args: string[],
