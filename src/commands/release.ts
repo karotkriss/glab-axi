@@ -4,7 +4,13 @@ import type { RepoContext } from "../context.js";
 import { takeBody, truncateBody } from "../body.js";
 import { formatCountLine } from "../format.js";
 import { getSuggestions } from "../suggestions.js";
-import { takeFlag, takeBoolFlag, getPositional, parseLimit } from "../args.js";
+import {
+  takeFlag,
+  takeBoolFlag,
+  getAllFlags,
+  getPositional,
+  parseLimit,
+} from "../args.js";
 import {
   field,
   pluck,
@@ -39,6 +45,36 @@ function releasesPath(ctx: RepoContext | undefined, suffix = ""): string {
 
 function releasePath(ctx: RepoContext | undefined, tag: string): string {
   return releasesPath(ctx, `/${encodeURIComponent(tag)}`);
+}
+
+// GitLab has no "prerelease" flag. Its nearest analogue is an "upcoming"
+// release: one whose `released_at` is in the future shows as upcoming (not yet
+// released) until an edit brings the date into the past. We date `--prerelease`
+// far in the future so it stays upcoming until deliberately promoted, matching
+// how a GitHub prerelease persists until it's marked as the full release.
+const PRERELEASE_RELEASED_AT = "9999-01-01T00:00:00Z";
+
+/**
+ * Parse a `--asset` value into a GitLab release asset link.
+ *
+ * GitLab does not upload files as release assets the way GitHub does; it models
+ * assets as links to already-hosted URLs. So an asset is given as its URL, with
+ * an optional display name appended after `#` (mirroring gh's `file#label`):
+ *   --asset https://host/dl/app.zip
+ *   --asset https://host/dl/app.zip#App bundle
+ * With no `#name`, the name is derived from the URL's last path segment.
+ */
+function parseAsset(raw: string): { name: string; url: string } {
+  const hash = raw.indexOf("#");
+  const url = (hash === -1 ? raw : raw.slice(0, hash)).trim();
+  const explicitName = hash === -1 ? "" : raw.slice(hash + 1).trim();
+  if (!url) {
+    throw new AxiError(`--asset requires a URL: ${raw}`, "VALIDATION_ERROR", [
+      "Pass an asset link, e.g. `--asset https://host/downloads/app.zip#App bundle`",
+    ]);
+  }
+  const name = explicitName || url.split("/").filter(Boolean).pop() || url;
+  return { name, url };
 }
 
 // ---------------------------------------------------------------------------
@@ -81,13 +117,16 @@ flags{list}:
 flags{view}:
   --full (full release notes / description)
 flags{create}:
-  --name <text>, --body <text> or --body-file <path>, --ref <commit|branch> (source for a new tag)
+  --name <text>, --body <text> or --body-file <path>, --target <commit|branch> (source for a new tag; alias --ref), --prerelease (mark "upcoming" via a future released_at), --asset <url>[#name] (attach an asset link, repeatable)
 flags{delete}:
   (none)
+notes:
+  GitLab has no draft/prerelease flags: --prerelease dates the release in the future so it shows as "upcoming"; assets are links to hosted URLs, not uploaded files.
 examples:
   glab-axi release list
   glab-axi release view v1.0.0 --full
-  glab-axi release create v1.0.0 --name "v1.0.0" --body-file notes.md --ref main
+  glab-axi release create v1.0.0 --name "v1.0.0" --body-file notes.md --target main
+  glab-axi release create v2.0.0-rc1 --prerelease --asset https://host/dl/app.zip#App bundle
   glab-axi release delete v1.0.0`;
 
 // ---------------------------------------------------------------------------
@@ -149,13 +188,27 @@ async function releaseCreate(
   requireProject(ctx);
   const name = takeFlag(args, "--name");
   const body = takeBody(args);
-  const ref = takeFlag(args, "--ref");
+  // `--target` mirrors gh-axi; `--ref` is the original glab-axi name. Both map
+  // to GitLab's `ref` (the commit/branch a new tag is created from).
+  const target = takeFlag(args, "--target");
+  const refFlag = takeFlag(args, "--ref");
+  const ref = target ?? refFlag;
+  const prerelease = takeBoolFlag(args, "--prerelease");
+  const assets = getAllFlags(args, "--asset").map(parseAsset);
   const tag = requireTag(args);
 
   const rawFields = [`tag_name=${tag}`];
   if (name) rawFields.push(`name=${name}`);
   if (body !== undefined) rawFields.push(`description=${body}`);
   if (ref) rawFields.push(`ref=${ref}`);
+  if (prerelease) rawFields.push(`released_at=${PRERELEASE_RELEASED_AT}`);
+  for (const asset of assets) {
+    // Emit name then url per asset: GitLab's Rails param parser starts a new
+    // link object when it sees a subkey (`name`) that the current one already
+    // has, so paired name/url runs group into distinct links.
+    rawFields.push(`assets[links][][name]=${asset.name}`);
+    rawFields.push(`assets[links][][url]=${asset.url}`);
+  }
 
   try {
     const release = await glApi<Json>(releasesPath(ctx), {
@@ -163,12 +216,21 @@ async function releaseCreate(
       rawFields,
       ctx,
     });
+    const created: Record<string, unknown> = {
+      tag: release.tag_name ?? tag,
+      name: release.name ?? name ?? null,
+    };
+    const createdFields = [field("tag"), field("name")];
+    if (prerelease) {
+      created.upcoming = true;
+      createdFields.push(field("upcoming"));
+    }
+    if (assets.length > 0) {
+      created.assets = assets.length;
+      createdFields.push(field("assets"));
+    }
     return renderOutput([
-      renderDetail(
-        "created",
-        { tag: release.tag_name ?? tag, name: release.name ?? name ?? null },
-        [field("tag"), field("name")],
-      ),
+      renderDetail("created", created, createdFields),
       renderHelp(
         getSuggestions({
           domain: "release",

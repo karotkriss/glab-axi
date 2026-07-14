@@ -148,6 +148,81 @@ describe("release create", () => {
     expect(glApiMock.mock.calls[0][1].rawFields).toContain("ref=main");
   });
 
+  it("maps --target onto ref (gh-axi flag parity)", async () => {
+    glApiMock.mockResolvedValueOnce(release());
+    await releaseCommand(
+      ["create", "v2.0.0", "--target", "release-branch"],
+      ctx,
+    );
+    expect(glApiMock.mock.calls[0][1].rawFields).toContain(
+      "ref=release-branch",
+    );
+  });
+
+  it("prefers --target over --ref when both are given", async () => {
+    glApiMock.mockResolvedValueOnce(release());
+    await releaseCommand(
+      ["create", "v2.0.0", "--ref", "main", "--target", "hotfix"],
+      ctx,
+    );
+    const rawFields = glApiMock.mock.calls[0][1].rawFields as string[];
+    expect(rawFields).toContain("ref=hotfix");
+    expect(rawFields).not.toContain("ref=main");
+  });
+
+  it("--prerelease dates the release in the future so it is upcoming", async () => {
+    glApiMock.mockResolvedValueOnce(release());
+    const out = await releaseCommand(
+      ["create", "v2.0.0-rc1", "--prerelease"],
+      ctx,
+    );
+    const rawFields = glApiMock.mock.calls[0][1].rawFields as string[];
+    const releasedAt = rawFields.find((f) => f.startsWith("released_at="));
+    expect(releasedAt).toBeDefined();
+    // Whatever sentinel is used, it must resolve to a future timestamp.
+    expect(
+      new Date(releasedAt!.slice("released_at=".length)).getTime(),
+    ).toBeGreaterThan(Date.now());
+    expect(out).toContain("upcoming: true");
+  });
+
+  it("attaches --asset values as GitLab asset links (name then url)", async () => {
+    glApiMock.mockResolvedValueOnce(release());
+    const out = await releaseCommand(
+      [
+        "create",
+        "v2.0.0",
+        "--asset",
+        "https://host/dl/app.zip#App bundle",
+        "--asset",
+        "https://host/dl/checksums.txt",
+      ],
+      ctx,
+    );
+    const rawFields = glApiMock.mock.calls[0][1].rawFields as string[];
+    // Explicit #name is used verbatim.
+    expect(rawFields).toContain("assets[links][][name]=App bundle");
+    expect(rawFields).toContain("assets[links][][url]=https://host/dl/app.zip");
+    // No #name → name derived from the URL's last path segment.
+    expect(rawFields).toContain("assets[links][][name]=checksums.txt");
+    expect(rawFields).toContain(
+      "assets[links][][url]=https://host/dl/checksums.txt",
+    );
+    // name must precede its paired url so GitLab groups them into one link.
+    const firstName = rawFields.indexOf("assets[links][][name]=App bundle");
+    const firstUrl = rawFields.indexOf(
+      "assets[links][][url]=https://host/dl/app.zip",
+    );
+    expect(firstName).toBeLessThan(firstUrl);
+    expect(out).toContain("assets: 2");
+  });
+
+  it("rejects an --asset with no URL", async () => {
+    await expect(
+      releaseCommand(["create", "v2.0.0", "--asset", "#just a name"], ctx),
+    ).rejects.toThrow("--asset requires a URL");
+  });
+
   it("is idempotent: an existing tag (409) becomes a no-op", async () => {
     glApiMock.mockRejectedValueOnce(
       new AxiError("Release already exists", "CONFLICT"),
