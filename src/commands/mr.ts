@@ -144,9 +144,11 @@ function fileDiff(c: Json): string {
   const lines = [`diff --git a/${oldp} b/${newp}`];
   if (c.new_file) lines.push(`new file mode ${c.b_mode ?? "100644"}`);
   if (c.deleted_file) lines.push(`deleted file mode ${c.a_mode ?? "100644"}`);
+  if (c.renamed_file) lines.push(`rename from ${oldp}`, `rename to ${newp}`);
+  const body = typeof c.diff === "string" ? c.diff : "";
+  if (c.renamed_file && body === "") return lines.join("\n");
   lines.push(c.new_file ? "--- /dev/null" : `--- a/${oldp}`);
   lines.push(c.deleted_file ? "+++ /dev/null" : `+++ b/${newp}`);
-  const body = typeof c.diff === "string" ? c.diff : "";
   return `${lines.join("\n")}\n${body}`;
 }
 
@@ -185,9 +187,7 @@ function buildReviewSummary(
   const approved =
     typeof approvals?.approved === "boolean"
       ? approvals.approved
-      : required > 0
-        ? given >= required
-        : given > 0;
+      : given >= required;
   const { resolved, unresolved } = threadResolution(discussions);
   const total = resolved + unresolved;
   return {
