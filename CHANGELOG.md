@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `mr list` head/base aliases and `mr view` head SHA + web URL.
 - `api --jq <expr>` and `api --raw` (alias `--json`) - extract a field or print the raw JSON, operating on the unmodified response.
 - `release create` flag parity: `--target` (alias `--ref`), `--prerelease`, and `--asset <url>[#name]`.
-- npm publish automation: a GitHub Actions workflow publishes glab-axi to npm with provenance whenever a GitHub release is published (`.github/workflows/release.yml`).
+- npm publish automation: a GitHub Actions workflow publishes glab-axi to npm with provenance whenever a GitHub release is published (`.github/workflows/release.yml`). It runs in the `npm-publish` Actions environment, reading `NPM_TOKEN` as an environment secret, and offers a manual `workflow_dispatch` dry run that validates the tarball and the secret without uploading.
 - This CHANGELOG, following the Keep a Changelog convention.
 - A `glab-axi-release` agent skill documenting the release process end to end.
 
