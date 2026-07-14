@@ -87,6 +87,24 @@ describe("variable list", () => {
     expect(glApiMock.mock.calls[0][0]).toContain("per_page=100");
     expect(glApiMock.mock.calls[0][0]).not.toContain("per_page=NaN");
   });
+
+  it("flags truncation when the raw page is full, even after filtering shrinks the count", async () => {
+    // Raw page hits --limit 2, but one of those is masked and filtered out,
+    // so the visible count (1) must not be mistaken for the full result set.
+    glApiMock.mockResolvedValueOnce([
+      variable(),
+      variable({ key: "API_KEY", masked: true, value: "sk-secret" }),
+    ]);
+    const out = await variableCommand(["list", "--limit", "2"], ctx);
+    expect(out).toContain("count: 1 (showing first 1)");
+  });
+
+  it("does not flag truncation when the raw page is not full", async () => {
+    glApiMock.mockResolvedValueOnce([variable()]);
+    const out = await variableCommand(["list", "--limit", "2"], ctx);
+    expect(out).toContain("count: 1");
+    expect(out).not.toContain("showing first");
+  });
 });
 
 describe("variable get", () => {
@@ -103,6 +121,16 @@ describe("variable get", () => {
     await expect(variableCommand(["get"], ctx)).rejects.toThrow(
       "Missing variable name",
     );
+  });
+
+  it("redacts the value of a masked variable and never echoes the plaintext", async () => {
+    glApiMock.mockResolvedValueOnce(
+      variable({ key: "API_KEY", masked: true, value: "sk-secret" }),
+    );
+    const out = await variableCommand(["get", "API_KEY"], ctx);
+    expect(out).toContain("[masked]");
+    expect(out).not.toContain("sk-secret");
+    expect(out).toContain("secret list");
   });
 });
 

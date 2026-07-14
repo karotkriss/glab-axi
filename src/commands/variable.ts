@@ -214,6 +214,9 @@ async function variableList(
   // belong to `secret list`, which never reveals their values.
   const items = all.filter((v) => !v.masked);
   const isEmpty = items.length === 0;
+  // A full raw page means more variables may exist beyond it, even after the
+  // masked filter shrinks the visible count below `limit`.
+  const truncated = all.length === limit;
 
   if (isEmpty) {
     return renderOutput([
@@ -229,7 +232,10 @@ async function variableList(
     ]);
   }
   return renderOutput([
-    formatCountLine({ count: items.length, limit }),
+    formatCountLine({
+      count: items.length,
+      limit: truncated ? items.length : undefined,
+    }),
     renderList("variables", items, listSchema),
     renderHelp(
       getSuggestions({
@@ -246,14 +252,20 @@ async function variableGet(args: string[], ctx?: RepoContext): Promise<string> {
   const env = takeFlag(args, "--env") ?? "*";
   const name = requireName(args, "variable");
   const variable = await glApi<Json>(variableKeyPath(ctx, name, env), { ctx });
+  const masked = variable.masked === true;
 
   return renderOutput([
-    renderDetail("variable", variable, getSchema),
+    renderDetail(
+      "variable",
+      masked ? { ...variable, value: "[masked]" } : variable,
+      getSchema,
+    ),
     renderHelp(
       getSuggestions({
         domain: "variable",
         action: "get",
         id: name,
+        state: masked ? "masked" : undefined,
         repo: ctx,
       }),
     ),
