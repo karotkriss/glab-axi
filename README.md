@@ -62,7 +62,8 @@ Every response ends with `help:` hints for logical next steps. Run `glab-axi --h
 | `issue`   | list / view / links / create / edit / close / reopen / comment |
 | `mr`      | list / view / create / update / merge / approve / checks / diff / comment (by IID; `view`, `checks`, and `diff` also take a full MR URL) |
 | `ci`      | list / view / status / jobs / watch / log / retry (pipelines; `watch` blocks until a pipeline finishes and exits non-zero if it did not succeed) |
-| `project` | view / list / create |
+| `project` | view / list / create / delete (`delete` names its target and requires `--yes`) |
+| `repo`    | create-file / create-branch (writes the project's git contents) |
 | `label`   | list / create / delete |
 | `variable`| list / get / set / delete (plain, unmasked CI/CD variables) |
 | `secret`  | list / set / delete (masked & protected CI/CD variables; `list` never reveals values) |
@@ -93,6 +94,30 @@ glab-axi issue list -R gitlab.example.com/group/subgroup/project
 # project from the git remote, host overridden by env
 GITLAB_HOST=gitlab.example.com glab-axi mr list
 ```
+
+### Projects and their repositories
+
+`project` addresses the project entity; `repo` writes its git contents.
+Together they cover a project's whole lifecycle without dropping to `api`.
+
+```sh
+# create a project, seed its default branch, and open a feature branch with a diff
+glab-axi project create my-group/my-service --readme
+glab-axi repo create-file .gitlab-ci.yml -R my-group/my-service --content-file ci.yml
+glab-axi repo create-branch feature-x -R my-group/my-service
+glab-axi repo create-file src/app.ts -R my-group/my-service --branch feature-x --content "export const app = 1;"
+
+# tear it down again
+glab-axi project delete my-group/my-service --yes
+```
+
+`repo create-file` commits a single file directly to `--branch` (defaulting to the project's default branch), creating that branch when the repository is still empty.
+Content comes from `--content`, `--content-file`, or piped stdin.
+`repo create-branch` branches from `--ref` (also defaulting to the default branch).
+Both are idempotent: an existing file or branch is a no-op (`already: true`), never an overwrite.
+
+`project delete` is destructive, so it takes its target as an explicit positional (a numeric project id, or a `[host/]group/project` path) rather than falling back to the resolved project, and it requires `--yes` - it never prompts.
+Deleting an already-absent project is a no-op (`already_absent: true`).
 
 ### Raw API passthrough
 

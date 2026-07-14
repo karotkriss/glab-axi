@@ -5,8 +5,8 @@ import {
   requireProject,
   type Json,
 } from "../gl.js";
-import { AxiError } from "../errors.js";
-import type { RepoContext } from "../context.js";
+import { AxiError, scrubTool } from "../errors.js";
+import { parseRepoArg, type RepoContext } from "../context.js";
 import { formatCountLine } from "../format.js";
 import { getSuggestions } from "../suggestions.js";
 import { takeFlag, takeBoolFlag, getPositional, parseLimit } from "../args.js";
@@ -50,21 +50,26 @@ const listSchema: FieldDef[] = [
 // ---------------------------------------------------------------------------
 
 export const PROJECT_HELP = `usage: glab-axi project <subcommand> [flags]
-subcommands[3]:
-  view, list, create <[namespace/]name>
+subcommands[4]:
+  view, list, create <[namespace/]name>, delete <id|[host/]group/project>
 flags{view}:
   (none — addresses the resolved project)
 flags{list}:
   --search <q>, --limit <n> (default 30)
 flags{create}:
   --public | --internal | --private (visibility; default private), --description <text>, --readme (initialize with a README)
+flags{delete}:
+  --yes/-y (required: confirms the deletion)
 notes:
   create takes the new project as a positional [namespace/]name (mirroring \`owner/repo\`): a leading group or user namespace is resolved to namespace_id, else the project lands under your own account. The host comes from -R/GITLAB_HOST, not the positional. --template and --clone (GitHub concepts) are refused with guidance rather than silently ignored.
+  delete names its target explicitly as a positional (a numeric project id, or a path) - it never falls back to the resolved project, so it cannot delete the project you happen to be standing in. It destroys the repository, issues, and merge requests, so it requires --yes and never prompts. A repeat delete is a no-op (already_absent). Where the instance enables delayed project deletion, the project is marked for deletion rather than removed immediately.
 examples:
   glab-axi project view -R gitlab.example.com/group/project
   glab-axi project list --search platform
   glab-axi project create my-service --description "Payments service"
-  glab-axi project create my-group/my-service --internal --readme`;
+  glab-axi project create my-group/my-service --internal --readme
+  glab-axi project delete my-group/my-service --yes
+  glab-axi project delete 1234 --yes`;
 
 // ---------------------------------------------------------------------------
 // Subcommands
@@ -299,6 +304,103 @@ async function projectCreate(
   ]);
 }
 
+/**
+ * Resolve `delete`'s target from its positional: a numeric project id, or a
+ * `[host/]group/project` path. A path may carry its own host, which targets the
+ * request unless an explicit `-R` flag was given (precedence: `-R` flag >
+ * positional host > git remote), mirroring how `mr view` treats an MR URL.
+ */
+function resolveDeleteTarget(
+  raw: string,
+  ctx?: RepoContext,
+): { id: string; label: string; ctx?: RepoContext } {
+  // A numeric id addresses the project directly as the REST :id; only the host
+  // comes from the context.
+  if (/^\d+$/.test(raw)) return { id: raw, label: raw, ctx };
+
+  const parsed = parseRepoArg(raw, "flag");
+  if (!parsed) {
+    throw new AxiError(`Invalid project: ${raw}`, "VALIDATION_ERROR", [
+      "Pass a numeric project id or a [host/]group/project path, e.g. `glab-axi project delete my-group/my-service --yes`",
+    ]);
+  }
+  const flagHost = ctx?.source === "flag" ? ctx.host : undefined;
+  const host = flagHost ?? parsed.host ?? ctx?.host;
+  return {
+    id: encodeURIComponent(parsed.project),
+    label: parsed.project,
+    ctx: { ...parsed, host },
+  };
+}
+
+async function projectDelete(
+  args: string[],
+  ctx?: RepoContext,
+): Promise<string> {
+  const confirmed = takeBoolFlag(args, "--yes") || takeBoolFlag(args, "-y");
+  const raw = getPositional(args, 0);
+  if (!raw) {
+    throw new AxiError("Missing project", "VALIDATION_ERROR", [
+      "glab-axi project delete <id|[host/]group/project> --yes",
+    ]);
+  }
+  const target = resolveDeleteTarget(raw, ctx);
+
+  // Destructive and irreversible, so it is confirmed by flag. An agent cannot
+  // answer a prompt, so this refuses instead of asking (AXI: no interactive
+  // prompts - every operation completes with flags alone).
+  if (!confirmed) {
+    throw new AxiError(
+      `Refusing to delete project ${target.label} without confirmation - this destroys its repository, issues, and merge requests`,
+      "VALIDATION_ERROR",
+      [`Re-run with --yes: \`glab-axi project delete ${raw} --yes\``],
+    );
+  }
+
+  const path = `projects/${target.id}`;
+  const suggestions = renderHelp(
+    getSuggestions({ domain: "project", action: "delete" }),
+  );
+
+  // Idempotent: GET first so a repeat delete is a definitive no-op rather than
+  // an error (mirrors `release delete`).
+  const existing = await glApiResult(path, { ctx: target.ctx });
+  if (existing.exitCode !== 0) {
+    const text = `${existing.stderr} ${existing.stdout}`;
+    if (/404|not found/i.test(text)) {
+      return renderOutput([
+        renderDetail(
+          "project",
+          { project: target.label, already_absent: true },
+          [field("project"), field("already_absent")],
+        ),
+        suggestions,
+      ]);
+    }
+    throw new AxiError(
+      scrubTool(existing.stderr || existing.stdout) ||
+        "Failed to look up project",
+      "UNKNOWN",
+    );
+  }
+
+  const result = await glApiResult(path, { method: "DELETE", ctx: target.ctx });
+  if (result.exitCode !== 0) {
+    throw new AxiError(
+      scrubTool(result.stderr || result.stdout) || "Failed to delete project",
+      "UNKNOWN",
+    );
+  }
+
+  return renderOutput([
+    renderDetail("deleted", { project: target.label, status: "ok" }, [
+      field("project"),
+      field("status"),
+    ]),
+    suggestions,
+  ]);
+}
+
 // ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
@@ -316,6 +418,8 @@ export async function projectCommand(
       return projectList(rest, ctx);
     case "create":
       return projectCreate(rest, ctx);
+    case "delete":
+      return projectDelete(rest, ctx);
     case "--help":
     case "-h":
     case "help":

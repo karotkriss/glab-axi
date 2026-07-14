@@ -259,6 +259,196 @@ describe("project create", () => {
   });
 });
 
+describe("project delete", () => {
+  it("requires a project positional", async () => {
+    await expect(projectCommand(["delete", "--yes"], ctx)).rejects.toThrow(
+      "Missing project",
+    );
+  });
+
+  it("refuses without --yes and names the target", async () => {
+    await expect(
+      projectCommand(["delete", "my-group/svc"], ctx),
+    ).rejects.toThrow("Refusing to delete project my-group/svc");
+    expect(glApiResultMock.mock.calls.length).toBe(0);
+  });
+
+  it("suggests the --yes re-run in the refusal", async () => {
+    const err = await projectCommand(["delete", "my-group/svc"], ctx).catch(
+      (e) => e as AxiError,
+    );
+    expect(err.suggestions).toContain(
+      "Re-run with --yes: `glab-axi project delete my-group/svc --yes`",
+    );
+  });
+
+  it("rejects a positional that is neither an id nor a group/project path", async () => {
+    await expect(
+      projectCommand(["delete", "just-a-name", "--yes"], ctx),
+    ).rejects.toThrow("Invalid project: just-a-name");
+  });
+
+  it("DELETEs the encoded path after confirming it exists", async () => {
+    glApiResultMock.mockResolvedValueOnce({
+      stdout: JSON.stringify(project()),
+      stderr: "",
+      exitCode: 0,
+    }); // GET-first
+    glApiResultMock.mockResolvedValueOnce({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+    }); // DELETE
+
+    const out = await projectCommand(["delete", "my-group/svc", "--yes"], ctx);
+
+    const encoded = encodeURIComponent("my-group/svc");
+    expect(glApiResultMock.mock.calls[0][0]).toBe(`projects/${encoded}`);
+    expect(glApiResultMock.mock.calls[0][1].method).toBeUndefined();
+    expect(glApiResultMock.mock.calls[1][0]).toBe(`projects/${encoded}`);
+    expect(glApiResultMock.mock.calls[1][1].method).toBe("DELETE");
+    expect(out).toContain("deleted");
+    expect(out).toContain("project: my-group/svc");
+    expect(out).toContain("status: ok");
+  });
+
+  it("accepts -y as the confirmation flag", async () => {
+    glApiResultMock.mockResolvedValueOnce({
+      stdout: JSON.stringify(project()),
+      stderr: "",
+      exitCode: 0,
+    });
+    glApiResultMock.mockResolvedValueOnce({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+    });
+    const out = await projectCommand(["delete", "my-group/svc", "-y"], ctx);
+    expect(out).toContain("status: ok");
+  });
+
+  it("addresses a numeric id directly, unencoded", async () => {
+    glApiResultMock.mockResolvedValueOnce({
+      stdout: JSON.stringify(project()),
+      stderr: "",
+      exitCode: 0,
+    });
+    glApiResultMock.mockResolvedValueOnce({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+    });
+
+    const out = await projectCommand(["delete", "1234", "--yes"], ctx);
+
+    expect(glApiResultMock.mock.calls[0][0]).toBe("projects/1234");
+    expect(glApiResultMock.mock.calls[1][0]).toBe("projects/1234");
+    // TOON quotes a numeric-looking string, keeping the id a string not a number.
+    expect(out).toContain('project: "1234"');
+  });
+
+  it("takes the host from a host-qualified positional", async () => {
+    glApiResultMock.mockResolvedValueOnce({
+      stdout: JSON.stringify(project()),
+      stderr: "",
+      exitCode: 0,
+    });
+    glApiResultMock.mockResolvedValueOnce({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+    });
+
+    // No -R: the positional's own host targets the request.
+    const out = await projectCommand([
+      "delete",
+      "gitlab.other.com/my-group/svc",
+      "--yes",
+    ]);
+
+    expect(glApiResultMock.mock.calls[0][1].ctx).toMatchObject({
+      host: "gitlab.other.com",
+      project: "my-group/svc",
+    });
+    expect(out).toContain("project: my-group/svc");
+  });
+
+  it("lets an explicit -R host win over the positional's host", async () => {
+    glApiResultMock.mockResolvedValueOnce({
+      stdout: JSON.stringify(project()),
+      stderr: "",
+      exitCode: 0,
+    });
+    glApiResultMock.mockResolvedValueOnce({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+    });
+
+    await projectCommand(
+      ["delete", "gitlab.other.com/my-group/svc", "--yes"],
+      ctx, // source: "flag", host: gitlab.example.com
+    );
+
+    expect(glApiResultMock.mock.calls[0][1].ctx).toMatchObject({
+      host: "gitlab.example.com",
+      project: "my-group/svc",
+    });
+  });
+
+  it("is a no-op when the project is already absent (no DELETE)", async () => {
+    glApiResultMock.mockResolvedValueOnce(NOT_FOUND);
+
+    const out = await projectCommand(["delete", "my-group/svc", "--yes"], ctx);
+
+    expect(out).toContain("already_absent: true");
+    expect(glApiResultMock.mock.calls.length).toBe(1); // GET only
+  });
+
+  it("throws a scrubbed error when the lookup fails for a non-404 reason", async () => {
+    glApiResultMock.mockResolvedValueOnce({
+      stdout: "",
+      stderr: "HTTP 403 Forbidden",
+      exitCode: 22,
+    });
+    await expect(
+      projectCommand(["delete", "my-group/svc", "--yes"], ctx),
+    ).rejects.toThrow("HTTP 403 Forbidden");
+  });
+
+  it("throws when the DELETE itself fails", async () => {
+    glApiResultMock.mockResolvedValueOnce({
+      stdout: JSON.stringify(project()),
+      stderr: "",
+      exitCode: 0,
+    });
+    glApiResultMock.mockResolvedValueOnce({
+      stdout: "",
+      stderr: "HTTP 403 Forbidden",
+      exitCode: 22,
+    });
+    await expect(
+      projectCommand(["delete", "my-group/svc", "--yes"], ctx),
+    ).rejects.toThrow("HTTP 403 Forbidden");
+  });
+
+  it("suggests project list, without a -R naming the deleted project", async () => {
+    glApiResultMock.mockResolvedValueOnce({
+      stdout: JSON.stringify(project()),
+      stderr: "",
+      exitCode: 0,
+    });
+    glApiResultMock.mockResolvedValueOnce({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+    });
+    const out = await projectCommand(["delete", "my-group/svc", "--yes"], ctx);
+    expect(out).toContain("glab-axi project list");
+    expect(out).not.toContain("-R my-group/svc");
+  });
+});
+
 describe("project router", () => {
   it("returns help for no subcommand", async () => {
     const out = await projectCommand([], ctx);
