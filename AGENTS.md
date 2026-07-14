@@ -23,6 +23,8 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - `src/commands/*.ts` - one file per domain (issue, mr, ci, project, label, release, search, api, home, setup). `mr.ts` is the reference template.
 - `mr view`/`mr checks` accept a full MR URL in place of the IID; the URL's own host/project target the request (precedence: `-R` flag > URL > git remote), tagged `source: "flag"` so it flows through to help suggestions like an explicit `-R`.
 - `mr checks` reuses `ci.ts`'s exported `resolveMrPipeline`/`fetchJobs`/`renderSummary` rather than reimplementing verdict bucketing - intentional cross-command reuse.
+- `ci watch <pipeline-id>` polls until the pipeline is terminal, then prints the same verdict aggregate as `ci status`. Terminal detection lists the ACTIVE statuses and treats everything else as terminal, so an unknown GitLab status can't spin the loop forever; polling is bounded by poll count (`timeout / interval`), not wall-clock.
+- `ci watch`'s exit code follows the pipeline's own status, not the job verdict (a canceled pipeline with passing jobs still exits non-zero): success -> 0, anything else -> `process.exitCode = 1`, since throwing an `AxiError` would replace the verdict output on stdout. The delay goes through `src/sleep.ts` so tests can mock it away instead of waiting real seconds.
 - IID-addressed: issues and merge requests use their project-scoped IID (the number in the URL), not the global id.
 - `glab` field flags are inverted from `gh`: `-F`/`--field` = typed, `-f`/`--raw-field` = raw string. In `GlApiOptions`, `fields` -> `-F` (ids/booleans), `rawFields` -> `-f` (user text: titles, bodies, labels).
 
