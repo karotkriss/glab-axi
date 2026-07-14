@@ -4,9 +4,10 @@ import { DESCRIPTION, TOP_HELP } from "./cli.js";
 // outcome-focused so it fires on "needs GitLab" intents.
 export const SKILL_DESCRIPTION =
   "Operate GitLab through the glab-axi CLI - issues, merge requests, CI/CD " +
-  "pipelines, projects, labels, releases, search, and raw API access. Use " +
-  "whenever a task touches GitLab: listing or filing issues, reviewing or " +
-  "merging merge requests, checking pipeline status and failed job logs, " +
+  "pipelines, projects, labels, CI/CD variables and secrets, releases, " +
+  "search, and raw API access. Use whenever a task touches GitLab: listing " +
+  "or filing issues, reviewing or merging merge requests, checking pipeline " +
+  "status and failed job logs, managing CI/CD variables and secrets, " +
   "cutting releases, or querying the GitLab API.";
 
 export const SKILL_AUTHOR = "Christopher McKay";
@@ -51,7 +52,7 @@ glab-axi requires the GitLab CLI installed and authenticated. If a command fails
 
 ## When to use
 
-Use glab-axi whenever a task touches GitLab: listing, filing, or editing issues; viewing, creating, updating, approving, or merging merge requests; inspecting CI/CD pipelines and failed job logs; managing releases, projects, or labels; searching issues, MRs, or projects; or calling the GitLab API directly.
+Use glab-axi whenever a task touches GitLab: listing, filing, or editing issues; viewing, creating, updating, approving, or merging merge requests; inspecting CI/CD pipelines and failed job logs; managing CI/CD variables and secrets; managing releases, projects, or labels; searching issues, MRs, or projects; or calling the GitLab API directly.
 
 ## Workflow
 
