@@ -1,8 +1,15 @@
-import { glApi, projectId, requireProject, type Json } from "../gl.js";
+import {
+  glApi,
+  glApiResult,
+  projectId,
+  requireProject,
+  type Json,
+} from "../gl.js";
+import { AxiError } from "../errors.js";
 import type { RepoContext } from "../context.js";
 import { formatCountLine } from "../format.js";
 import { getSuggestions } from "../suggestions.js";
-import { takeFlag, parseLimit } from "../args.js";
+import { takeFlag, takeBoolFlag, getPositional, parseLimit } from "../args.js";
 import {
   field,
   lower,
@@ -43,16 +50,21 @@ const listSchema: FieldDef[] = [
 // ---------------------------------------------------------------------------
 
 export const PROJECT_HELP = `usage: glab-axi project <subcommand> [flags]
-subcommands[2]:
-  view, list
+subcommands[3]:
+  view, list, create <[namespace/]name>
 flags{view}:
   (none — addresses the resolved project)
 flags{list}:
   --search <q>, --limit <n> (default 30)
+flags{create}:
+  --public | --internal | --private (visibility; default private), --description <text>, --readme (initialize with a README)
+notes:
+  create takes the new project as a positional [namespace/]name (mirroring \`owner/repo\`): a leading group or user namespace is resolved to namespace_id, else the project lands under your own account. The host comes from -R/GITLAB_HOST, not the positional. --template and --clone (GitHub concepts) are refused with guidance rather than silently ignored.
 examples:
   glab-axi project view -R gitlab.example.com/group/project
   glab-axi project list --search platform
-  glab-axi project list --limit 50`;
+  glab-axi project create my-service --description "Payments service"
+  glab-axi project create my-group/my-service --internal --readme`;
 
 // ---------------------------------------------------------------------------
 // Subcommands
@@ -106,6 +118,187 @@ async function projectList(args: string[], ctx?: RepoContext): Promise<string> {
   ]);
 }
 
+/**
+ * Resolve a group/user namespace path to its numeric id and canonical full
+ * path. GitLab's `POST /projects` only accepts `namespace_id` (an integer),
+ * never a path, so an org-owned create must look the namespace up first.
+ */
+async function resolveNamespace(
+  namespacePath: string,
+  ctx?: RepoContext,
+): Promise<{ id: number; fullPath: string }> {
+  try {
+    const ns = await glApi<Json>(
+      `namespaces/${encodeURIComponent(namespacePath)}`,
+      { ctx },
+    );
+    return { id: ns.id, fullPath: ns.full_path ?? namespacePath };
+  } catch (err) {
+    if (err instanceof AxiError && err.code === "NOT_FOUND") {
+      throw new AxiError(
+        `Namespace not found: ${namespacePath}`,
+        "VALIDATION_ERROR",
+        [
+          "Pass an existing group or user namespace, e.g. `glab-axi project create my-group/my-service`",
+          "Omit the namespace to create the project under your own account",
+        ],
+      );
+    }
+    throw err;
+  }
+}
+
+/** Build a `-R` target (host-qualified when known) for follow-up suggestions. */
+function suggestTarget(ctx: RepoContext | undefined, path: string): string {
+  return ctx?.host ? `${ctx.host}/${path}` : path;
+}
+
+async function projectCreate(
+  args: string[],
+  ctx?: RepoContext,
+): Promise<string> {
+  // GitHub concepts with no clean `glab api` create path. Refuse loudly (like
+  // release's --draft) rather than silently ignore: an agent carrying gh muscle
+  // memory would otherwise believe it cloned/templated when nothing happened.
+  if (takeBoolFlag(args, "--clone")) {
+    throw new AxiError(
+      "Cloning after create is not supported - this creates the project through the GitLab API only",
+      "VALIDATION_ERROR",
+      ["Create the project, then `git clone` the returned url yourself"],
+    );
+  }
+  if (takeFlag(args, "--template") !== undefined) {
+    throw new AxiError(
+      "Creating from a template repository is not supported - GitLab templates work differently from GitHub's",
+      "VALIDATION_ERROR",
+      [
+        "Create an empty project here, or apply a GitLab group/instance project template via the GitLab UI",
+      ],
+    );
+  }
+
+  const isPublic = takeBoolFlag(args, "--public");
+  const isInternal = takeBoolFlag(args, "--internal");
+  const isPrivate = takeBoolFlag(args, "--private");
+  const chosen = [
+    isPublic ? "public" : undefined,
+    isInternal ? "internal" : undefined,
+    isPrivate ? "private" : undefined,
+  ].filter((v): v is string => v !== undefined);
+  if (chosen.length > 1) {
+    throw new AxiError(
+      "Choose a single visibility: --public, --internal, or --private",
+      "VALIDATION_ERROR",
+    );
+  }
+  // Default private: GitLab's own API default and the safe choice - never
+  // create a public project unless the caller explicitly asks.
+  const visibility = chosen[0] ?? "private";
+  const description = takeFlag(args, "--description");
+  const readme = takeBoolFlag(args, "--readme");
+
+  const raw = getPositional(args, 0);
+  if (!raw) {
+    throw new AxiError("Missing project name", "VALIDATION_ERROR", [
+      'glab-axi project create [namespace/]<name> [--public|--internal|--private] [--description "..."] [--readme]',
+    ]);
+  }
+  const slash = raw.lastIndexOf("/");
+  const namespacePath = slash === -1 ? undefined : raw.slice(0, slash);
+  const name = slash === -1 ? raw : raw.slice(slash + 1);
+  if (!name) {
+    throw new AxiError(`Invalid project name: ${raw}`, "VALIDATION_ERROR", [
+      "glab-axi project create [namespace/]<name>",
+    ]);
+  }
+
+  // Resolve the owner path (group full_path or your own username) so the create
+  // is idempotent: a GET on the target path avoids a duplicate POST and gives a
+  // definitive no-op when the project already exists.
+  let namespaceId: number | undefined;
+  let ownerPath: string;
+  if (namespacePath) {
+    const ns = await resolveNamespace(namespacePath, ctx);
+    namespaceId = ns.id;
+    ownerPath = ns.fullPath;
+  } else {
+    const me = await glApi<Json>("user", { ctx });
+    ownerPath = me?.username ?? "";
+  }
+  const fullPath = ownerPath ? `${ownerPath}/${name}` : name;
+
+  const existing = await glApiResult(
+    `projects/${encodeURIComponent(fullPath)}`,
+    { ctx },
+  );
+  if (existing.exitCode === 0 && existing.stdout.trim()) {
+    let proj: Json = {};
+    try {
+      proj = JSON.parse(existing.stdout);
+    } catch {
+      /* fall back to the values we already know */
+    }
+    const path = proj.path_with_namespace ?? fullPath;
+    return renderOutput([
+      renderDetail(
+        "project",
+        {
+          project: path,
+          visibility: proj.visibility ?? visibility,
+          url: proj.web_url ?? null,
+          already: true,
+        },
+        [field("project"), lower("visibility"), field("url"), field("already")],
+      ),
+      renderHelp(
+        getSuggestions({
+          domain: "project",
+          action: "create",
+          id: suggestTarget(ctx, path),
+          repo: ctx,
+        }),
+      ),
+    ]);
+  }
+
+  const rawFields = [
+    `name=${name}`,
+    `path=${name}`,
+    `visibility=${visibility}`,
+  ];
+  if (description !== undefined) rawFields.push(`description=${description}`);
+  const fields: string[] = [];
+  if (namespaceId !== undefined) fields.push(`namespace_id=${namespaceId}`);
+  if (readme) fields.push("initialize_with_readme=true");
+
+  const created = await glApi<Json>("projects", {
+    method: "POST",
+    rawFields,
+    fields,
+    ctx,
+  });
+  const path = created.path_with_namespace ?? fullPath;
+  return renderOutput([
+    renderDetail(
+      "created",
+      {
+        project: path,
+        visibility: created.visibility ?? visibility,
+        url: created.web_url ?? null,
+      },
+      [field("project"), lower("visibility"), field("url")],
+    ),
+    renderHelp(
+      getSuggestions({
+        domain: "project",
+        action: "create",
+        id: suggestTarget(ctx, path),
+        repo: ctx,
+      }),
+    ),
+  ]);
+}
+
 // ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
@@ -121,6 +314,8 @@ export async function projectCommand(
       return projectView(ctx);
     case "list":
       return projectList(rest, ctx);
+    case "create":
+      return projectCreate(rest, ctx);
     case "--help":
     case "-h":
     case "help":

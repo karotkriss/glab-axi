@@ -248,6 +248,13 @@ const table: Entry[] = [
       `Run \`glab-axi project view -R [host/]group/project\` to view a project`,
     ],
   },
+  {
+    match: (c) => c.domain === "project" && c.action === "create",
+    lines: (c) => [
+      `Run \`glab-axi project view -R ${c.id}\` to view the new project`,
+      `Run \`glab-axi mr list -R ${c.id}\` to see its merge requests`,
+    ],
+  },
 
   // ---- label ----
   {
