@@ -98,6 +98,105 @@ function resolveMrRef(
 }
 
 // ---------------------------------------------------------------------------
+// Diff helpers (mr diff)
+// ---------------------------------------------------------------------------
+
+/** Classify a changed file from its GitLab MR change flags. */
+function changeStatus(c: Json): string {
+  if (c.new_file) return "added";
+  if (c.deleted_file) return "deleted";
+  if (c.renamed_file) return "renamed";
+  return "modified";
+}
+
+/** Display path: `old -> new` for a rename, otherwise the file's path. */
+function changePath(c: Json): string {
+  if (c.renamed_file && c.old_path && c.old_path !== c.new_path) {
+    return `${c.old_path} -> ${c.new_path}`;
+  }
+  return c.new_path ?? c.old_path ?? "";
+}
+
+/** Count +/- lines in a hunk body (the `+++`/`---` guards are defensive). */
+function countDiffLines(diff: unknown): {
+  additions: number;
+  deletions: number;
+} {
+  let additions = 0;
+  let deletions = 0;
+  if (typeof diff === "string") {
+    for (const line of diff.split("\n")) {
+      if (line.startsWith("+") && !line.startsWith("+++")) additions++;
+      else if (line.startsWith("-") && !line.startsWith("---")) deletions++;
+    }
+  }
+  return { additions, deletions };
+}
+
+/**
+ * Reconstruct a complete per-file unified diff. GitLab's `changes[].diff` is
+ * only the hunk body (starts at `@@`), so we prepend the git/`---`/`+++` header
+ * lines it omits, mapping new/deleted files to /dev/null.
+ */
+function fileDiff(c: Json): string {
+  const oldp = c.old_path ?? c.new_path ?? "";
+  const newp = c.new_path ?? c.old_path ?? "";
+  const header = `diff --git a/${oldp} b/${newp}`;
+  const minus = c.new_file ? "--- /dev/null" : `--- a/${oldp}`;
+  const plus = c.deleted_file ? "+++ /dev/null" : `+++ b/${newp}`;
+  const body = typeof c.diff === "string" ? c.diff : "";
+  return `${header}\n${minus}\n${plus}\n${body}`;
+}
+
+// ---------------------------------------------------------------------------
+// Review helpers (mr view --reviews)
+// ---------------------------------------------------------------------------
+
+/** Count resolved vs unresolved resolvable discussion threads. */
+function threadResolution(discussions: Json[]): {
+  resolved: number;
+  unresolved: number;
+} {
+  let resolved = 0;
+  let unresolved = 0;
+  for (const d of discussions) {
+    const notes: Json[] = Array.isArray(d?.notes) ? d.notes : [];
+    const resolvable = notes.filter((n) => n?.resolvable === true);
+    if (resolvable.length === 0) continue; // plain comment, not a thread
+    if (resolvable.every((n) => n.resolved === true)) resolved++;
+    else unresolved++;
+  }
+  return { resolved, unresolved };
+}
+
+/** Fold approval + thread state into a compact review summary object. */
+function buildReviewSummary(
+  approvals: Json,
+  discussions: Json[],
+): Record<string, string> {
+  const approvers: string[] = (approvals?.approved_by ?? [])
+    .map((a: Json) => a?.user?.username)
+    .filter(Boolean);
+  const required = approvals?.approvals_required ?? 0;
+  const given = approvers.length;
+  // GitLab CE omits the `approved` bool, so derive it when it's absent.
+  const approved =
+    typeof approvals?.approved === "boolean"
+      ? approvals.approved
+      : required > 0
+        ? given >= required
+        : given > 0;
+  const { resolved, unresolved } = threadResolution(discussions);
+  const total = resolved + unresolved;
+  return {
+    approved: approved ? "yes" : "no",
+    approvals: `${given}/${required}`,
+    approved_by: approvers.length ? approvers.join(",") : "none",
+    threads: `${total} total, ${resolved} resolved, ${unresolved} unresolved`,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Schemas
 // ---------------------------------------------------------------------------
 
@@ -184,12 +283,14 @@ function viewSchema(full: boolean, includeComments: boolean): FieldDef[] {
 // ---------------------------------------------------------------------------
 
 export const MR_HELP = `usage: glab-axi mr <subcommand> [flags]
-subcommands[8]:
-  list, view <iid|url>, create, update <iid>, merge <iid>, approve <iid>, checks <iid|url>, comment <iid>
+subcommands[9]:
+  list, view <iid|url>, create, update <iid>, merge <iid>, approve <iid>, checks <iid|url>, diff <iid|url>, comment <iid>
 flags{list}:
   --state <opened|closed|merged|all>, --source-branch/--head <b>, --target-branch/--base <b>, --label, --author <user>, --assignee <user>, --milestone <name>, --draft, --limit <n> (default 30), --fields <a,b,c>
 flags{view}:
-  --comments (include discussion notes), --full (head SHA, merge status, pipeline, full body); accepts an MR URL in place of the iid
+  --comments (include discussion notes), --reviews (approvals + thread resolution), --full (head SHA, merge status, pipeline, full body); accepts an MR URL in place of the iid
+flags{diff}:
+  --full (complete unified diff instead of the per-file summary); accepts an MR URL in place of the iid
 flags{create}:
   --title <text> (required), --source-branch <b> (required), --target-branch <b> (default: project default), --body <text> or --body-file <path>, --assignee <user>, --reviewer <user>, --label <a,b>, --milestone <name>, --draft, --remove-source-branch, --squash
 flags{update}:
@@ -205,7 +306,10 @@ flags{comment}:
 examples:
   glab-axi mr list --state all --head feature-1 --limit 1
   glab-axi mr view 42 --full
+  glab-axi mr view 42 --reviews
   glab-axi mr view https://gitlab.example.com/group/project/-/merge_requests/42 --full
+  glab-axi mr diff 42
+  glab-axi mr diff 42 --full
   glab-axi mr checks 42
   glab-axi mr create --title "Add X" --source-branch feat --target-branch main
   glab-axi mr merge 42 --squash --remove-source-branch
@@ -272,6 +376,7 @@ async function mrList(args: string[], ctx?: RepoContext): Promise<string> {
 
 async function mrView(args: string[], ctx?: RepoContext): Promise<string> {
   const includeComments = takeBoolFlag(args, "--comments");
+  const includeReviews = takeBoolFlag(args, "--reviews");
   const full = takeBoolFlag(args, "--full");
   const { iid, ctx: target } = resolveMrRef(args, ctx);
   const mr = await glApi<Json>(mrPath(target, iid), { ctx: target });
@@ -292,6 +397,17 @@ async function mrView(args: string[], ctx?: RepoContext): Promise<string> {
         })),
       ),
     );
+  }
+  if (includeReviews) {
+    const approvals = await glApi<Json>(mrPath(target, iid, "/approvals"), {
+      ctx: target,
+    });
+    const discussions = await glApi<Json[]>(
+      `${mrPath(target, iid, "/discussions")}?per_page=100`,
+      { ctx: target },
+    );
+    const summary = buildReviewSummary(approvals, discussions ?? []);
+    schema.push(custom("reviews", () => summary));
   }
   return renderOutput([
     renderDetail("merge_request", mr, schema),
@@ -741,6 +857,85 @@ async function mrChecks(args: string[], ctx?: RepoContext): Promise<string> {
   return renderOutput([renderSummary(jobs), help]);
 }
 
+/**
+ * `mr diff <iid|url>` — the gh-axi `pr diff` read. Default is a bounded per-file
+ * summary (path, status, +/- line counts) plus totals; `--full` emits the
+ * complete reconstructed unified diff. Backed by the MR changes endpoint, whose
+ * `overflow` flag marks a server-truncated diff on very large MRs.
+ */
+async function mrDiff(args: string[], ctx?: RepoContext): Promise<string> {
+  const full = takeBoolFlag(args, "--full");
+  const { iid, ctx: target } = resolveMrRef(args, ctx);
+  const data = await glApi<Json>(mrPath(target, iid, "/changes"), {
+    ctx: target,
+  });
+  const changes: Json[] = Array.isArray(data?.changes) ? data.changes : [];
+  const overflow = data?.overflow === true;
+
+  const nextSteps = getSuggestions({
+    domain: "mr",
+    action: "diff",
+    id: iid,
+    repo: target,
+  });
+
+  if (changes.length === 0) {
+    return renderOutput([
+      `diff: no file changes found for merge request ${iid}`,
+      renderHelp(nextSteps),
+    ]);
+  }
+
+  let additions = 0;
+  let deletions = 0;
+  const files = changes.map((c) => {
+    const counts = countDiffLines(c.diff);
+    additions += counts.additions;
+    deletions += counts.deletions;
+    return { path: changePath(c), status: changeStatus(c), ...counts };
+  });
+  const plural = files.length === 1 ? "" : "s";
+  const summary = `diff: ${files.length} file${plural} changed, +${additions} -${deletions}${overflow ? " (server-truncated: very large MR)" : ""}`;
+
+  if (full) {
+    const patch = changes.map(fileDiff).join("\n");
+    const envelope: Record<string, Json> = {
+      iid,
+      files_changed: files.length,
+      additions,
+      deletions,
+      diff: patch,
+    };
+    if (overflow) envelope.truncated = true;
+    return renderOutput([
+      renderDetail("merge_request_diff", envelope, [
+        field("iid"),
+        field("files_changed"),
+        field("additions"),
+        field("deletions"),
+        ...(overflow ? [field("truncated")] : []),
+        field("diff"),
+      ]),
+      renderHelp(nextSteps),
+    ]);
+  }
+
+  const help = renderHelp([
+    `Run \`glab-axi${repoFlag({ domain: "mr", action: "diff", repo: target })} mr diff ${iid} --full\` for the complete unified diff`,
+    ...nextSteps,
+  ]);
+  return renderOutput([
+    summary,
+    renderList("files", files, [
+      field("path"),
+      field("status"),
+      field("additions"),
+      field("deletions"),
+    ]),
+    help,
+  ]);
+}
+
 // ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
@@ -767,6 +962,8 @@ export async function mrCommand(
       return mrApprove(rest, ctx);
     case "checks":
       return mrChecks(rest, ctx);
+    case "diff":
+      return mrDiff(rest, ctx);
     case "comment":
       return mrComment(rest, ctx);
     case "--help":

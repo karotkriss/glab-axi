@@ -45,6 +45,8 @@ Drill in command-first:
 glab-axi issue list --state opened
 glab-axi issue view 12 --comments
 glab-axi mr view 42 --full
+glab-axi mr view 42 --reviews
+glab-axi mr diff 42
 glab-axi ci status --branch main
 glab-axi ci log 46450 --full
 ```
@@ -57,7 +59,7 @@ Every response ends with `help:` hints for logical next steps. Run `glab-axi --h
 |-----------|--------------|
 | (none)    | Dashboard of the current project |
 | `issue`   | list / view / create / edit / close / reopen / comment |
-| `mr`      | list / view / create / update / merge / approve / checks / comment (by IID; `view` and `checks` also take a full MR URL) |
+| `mr`      | list / view / create / update / merge / approve / checks / diff / comment (by IID; `view`, `checks`, and `diff` also take a full MR URL) |
 | `ci`      | list / view / status / jobs / watch / log / retry (pipelines; `watch` blocks until a pipeline finishes and exits non-zero if it did not succeed) |
 | `project` | view / list |
 | `label`   | list / create / delete |
@@ -77,7 +79,9 @@ Issues and merge requests are addressed by their project-scoped **IID** (the num
 
 `GITLAB_HOST` **overrides only the host** of an already-resolved project; on its own it does not select a project (there is no namespace to infer from a bare hostname).
 
-`mr view` and `mr checks` also accept a full merge request URL in place of the IID (e.g. `glab-axi mr view https://gitlab.example.com/group/project/-/merge_requests/42`); the URL's own host/project target the request, unless an explicit `-R` flag overrides it.
+`mr view`, `mr checks`, and `mr diff` also accept a full merge request URL in place of the IID (e.g. `glab-axi mr view https://gitlab.example.com/group/project/-/merge_requests/42`); the URL's own host/project target the request, unless an explicit `-R` flag overrides it.
+
+`mr view --reviews` adds approval state (who approved, approvals given/required) and discussion-thread resolution counts. `mr diff` prints a bounded per-file summary (path, status, `+`/`-` line counts) by default; `--full` emits the complete reconstructed unified diff.
 
 ```sh
 # explicit host + project
