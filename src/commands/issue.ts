@@ -11,6 +11,7 @@ import {
   field,
   pluck,
   lower,
+  mapEnum,
   relativeTime,
   joinArray,
   custom,
@@ -81,6 +82,25 @@ const LIST_EXTRA_FIELDS: Record<string, FieldSpec> = {
   },
 };
 
+// The `/links` endpoint returns full issue objects tagged with `link_type`.
+// Surface the relationship in human-readable form alongside the minimal
+// identifying fields (iid/title/state).
+const linksSchema: FieldDef[] = [
+  mapEnum(
+    "link_type",
+    {
+      relates_to: "relates to",
+      blocks: "blocks",
+      is_blocked_by: "is blocked by",
+    },
+    "relates to",
+    "relation",
+  ),
+  field("iid"),
+  field("title"),
+  lower("state"),
+];
+
 function viewSchema(full: boolean, includeComments: boolean): FieldDef[] {
   const base: FieldDef[] = [
     field("iid"),
@@ -115,12 +135,14 @@ function viewSchema(full: boolean, includeComments: boolean): FieldDef[] {
 // ---------------------------------------------------------------------------
 
 export const ISSUE_HELP = `usage: glab-axi issue <subcommand> [flags]
-subcommands[7]:
-  list, view <iid>, create, edit <iid>, close <iid>, reopen <iid>, comment <iid>
+subcommands[8]:
+  list, view <iid>, links <iid>, create, edit <iid>, close <iid>, reopen <iid>, comment <iid>
 flags{list}:
   --state <open|closed|all>, --label, --author <user>, --assignee <user>, --milestone <name>, --limit <n> (default 30), --fields <a,b,c>
 flags{view}:
   --comments (include discussion notes), --full (full body)
+flags{links}:
+  --limit <n> (default 30) - lists related/blocking/blocked-by issues with their relation, iid, title, state
 flags{create}:
   --title <text> (required), --body <text> or --body-file <path>, --label <a,b>, --assignee <user>, --milestone <name>, --confidential
 flags{edit}:
@@ -134,6 +156,7 @@ flags{comment}:
 examples:
   glab-axi issue list --state opened --label bug
   glab-axi issue view 42 --comments
+  glab-axi issue links 42
   glab-axi issue create --title "Fix X" --body-file ./desc.md
   glab-axi issue close 42
   glab-axi issue edit 42 --assignee alice`;
@@ -222,6 +245,30 @@ async function issueView(args: string[], ctx?: RepoContext): Promise<string> {
         repo: ctx,
       }),
     ),
+  ]);
+}
+
+async function issueLinks(args: string[], ctx?: RepoContext): Promise<string> {
+  const limit = parseLimit(takeFlag(args, "--limit"), 30);
+  const iid = takeNumber(args, "issue");
+  const items =
+    (await glApi<Json[]>(`${issuePath(ctx, iid, "/links")}?per_page=${limit}`, {
+      ctx,
+    })) ?? [];
+  const isEmpty = items.length === 0;
+  const help = renderHelp(
+    getSuggestions({ domain: "issue", action: "links", id: iid, repo: ctx }),
+  );
+  if (isEmpty) {
+    return renderOutput([
+      `linked_issues: no linked issues found for issue ${iid}`,
+      help,
+    ]);
+  }
+  return renderOutput([
+    formatCountLine({ count: items.length, limit }),
+    renderList("linked_issues", items, linksSchema),
+    help,
   ]);
 }
 
@@ -429,6 +476,8 @@ export async function issueCommand(
       return issueList(rest, ctx);
     case "view":
       return issueView(rest, ctx);
+    case "links":
+      return issueLinks(rest, ctx);
     case "create":
       return issueCreate(rest, ctx);
     case "edit":
