@@ -1,5 +1,8 @@
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { encode } from "@toon-format/toon";
-import { glApi, glRaw, requireProject, type Json } from "../gl.js";
+import { glApi, glApiList, glRaw, requireProject, type Json } from "../gl.js";
 import { AxiError } from "../errors.js";
 import type { RepoContext } from "../context.js";
 import { formatCountLine } from "../format.js";
@@ -221,11 +224,10 @@ async function ciList(args: string[], ctx?: RepoContext): Promise<string> {
   if (ref) params.set("ref", ref);
   if (status) params.set("status", status);
 
-  const items =
-    (await glApi<Json[]>(
-      `projects/${requireProject(ctx)}/pipelines?${params.toString()}`,
-      { ctx },
-    )) ?? [];
+  const { data: items, total: totalCount } = await glApiList<Json>(
+    `projects/${requireProject(ctx)}/pipelines?${params.toString()}`,
+    { ctx },
+  );
   const isEmpty = items.length === 0;
   if (isEmpty) {
     return renderOutput([
@@ -236,7 +238,7 @@ async function ciList(args: string[], ctx?: RepoContext): Promise<string> {
     ]);
   }
   return renderOutput([
-    formatCountLine({ count: items.length, limit }),
+    formatCountLine({ count: items.length, limit, totalCount }),
     renderList("pipelines", items, listSchema),
     renderHelp(
       getSuggestions({ domain: "ci", action: "list", isEmpty, repo: ctx }),
@@ -429,12 +431,47 @@ async function ciJobs(args: string[], ctx?: RepoContext): Promise<string> {
 
 const LOG_TAIL_CHARS = 20000;
 
+/**
+ * Match a CSI/OSC escape sequence. GitLab job traces carry colour codes, cursor
+ * control, and `\e[0K` section markers on nearly every line - all of it noise an
+ * agent pays for by the token, and none of it visible as meaning.
+ */
+const ANSI_PATTERN =
+  // eslint-disable-next-line no-control-regex -- an ANSI matcher is control chars by definition
+  /[\u001B\u009B][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[-a-zA-Z\d/#&.:=?%@~_]*)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g;
+
+function stripAnsi(text: string): string {
+  return text.replace(ANSI_PATTERN, "");
+}
+
+/**
+ * Spill the whole trace to a temp file so `--full` is not the only way out of a
+ * truncated log: the agent greps the file for earlier context instead of paying
+ * for the entire trace in its context window.
+ *
+ * Returns undefined when the write fails - the path is reported only if the file
+ * is really there, and a read-only tmpdir must not fail a read-only command.
+ */
+function spillLog(jobId: number, trace: string): string | undefined {
+  try {
+    const file = join(
+      mkdtempSync(join(tmpdir(), "glab-axi-logs-")),
+      `${jobId}-trace.log`,
+    );
+    writeFileSync(file, trace);
+    return file;
+  } catch {
+    return undefined;
+  }
+}
+
 async function ciLog(args: string[], ctx?: RepoContext): Promise<string> {
   const full = takeBoolFlag(args, "--full");
   const jobId = takeNumber(args, "job");
-  const trace = await glRaw(
-    `projects/${requireProject(ctx)}/jobs/${jobId}/trace`,
-    { ctx },
+  // Strip before measuring: the lengths reported and the tail sliced must
+  // describe the log the agent is actually shown.
+  const trace = stripAnsi(
+    await glRaw(`projects/${requireProject(ctx)}/jobs/${jobId}/trace`, { ctx }),
   );
 
   const originalLength = trace.length;
@@ -446,13 +483,26 @@ async function ciLog(args: string[], ctx?: RepoContext): Promise<string> {
     log,
     truncated,
   };
-  if (truncated) envelope.original_length = originalLength;
+  let logFile: string | undefined;
+  if (truncated) {
+    envelope.original_length = originalLength;
+    logFile = spillLog(jobId, trace);
+    if (logFile) envelope.full_log = logFile;
+  }
 
   const blocks: Array<string | undefined> = [encode({ job_log: envelope })];
   if (truncated) {
     blocks.push(
       renderHelp(
-        getSuggestions({ domain: "ci", action: "log", id: jobId, repo: ctx }),
+        getSuggestions({
+          domain: "ci",
+          action: "log",
+          id: jobId,
+          repo: ctx,
+          logFile,
+          shown: LOG_TAIL_CHARS,
+          total: originalLength,
+        }),
       ),
     );
   }

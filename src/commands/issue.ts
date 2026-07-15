@@ -1,4 +1,4 @@
-import { glApi, requireProject, type Json } from "../gl.js";
+import { glApi, glApiList, requireProject, type Json } from "../gl.js";
 import { AxiError } from "../errors.js";
 import type { RepoContext } from "../context.js";
 import { takeBody, truncateBody } from "../body.js";
@@ -184,13 +184,12 @@ async function issueList(args: string[], ctx?: RepoContext): Promise<string> {
   params.set("per_page", String(limit));
   params.set("order_by", "updated_at");
 
-  const items =
-    (await glApi<Json[]>(
-      `projects/${requireProject(ctx)}/issues?${params.toString()}`,
-      { ctx },
-    )) ?? [];
+  const { data: items, total: totalCount } = await glApiList<Json>(
+    `projects/${requireProject(ctx)}/issues?${params.toString()}`,
+    { ctx },
+  );
   const isEmpty = items.length === 0;
-  const countLine = formatCountLine({ count: items.length, limit });
+  const countLine = formatCountLine({ count: items.length, limit, totalCount });
   const schema =
     extraDefs.length > 0 ? [...listSchema, ...extraDefs] : listSchema;
 
@@ -251,10 +250,10 @@ async function issueView(args: string[], ctx?: RepoContext): Promise<string> {
 async function issueLinks(args: string[], ctx?: RepoContext): Promise<string> {
   const limit = parseLimit(takeFlag(args, "--limit"), 30);
   const iid = takeNumber(args, "issue");
-  const items =
-    (await glApi<Json[]>(`${issuePath(ctx, iid, "/links")}?per_page=${limit}`, {
-      ctx,
-    })) ?? [];
+  const { data: items, total: totalCount } = await glApiList<Json>(
+    `${issuePath(ctx, iid, "/links")}?per_page=${limit}`,
+    { ctx },
+  );
   const isEmpty = items.length === 0;
   const help = renderHelp(
     getSuggestions({ domain: "issue", action: "links", id: iid, repo: ctx }),
@@ -266,7 +265,7 @@ async function issueLinks(args: string[], ctx?: RepoContext): Promise<string> {
     ]);
   }
   return renderOutput([
-    formatCountLine({ count: items.length, limit }),
+    formatCountLine({ count: items.length, limit, totalCount }),
     renderList("linked_issues", items, linksSchema),
     help,
   ]);

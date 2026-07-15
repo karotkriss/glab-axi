@@ -2,8 +2,16 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Mock the gl executor so no real glab/network is touched.
 vi.mock("../src/gl.js", () => {
+  const glApi = vi.fn();
   return {
-    glApi: vi.fn(),
+    glApi,
+    // `glApiList` is `glApi` plus GitLab's X-Total header. Delegate so the path
+    // and rendering assertions below stay meaningful, and override it per-test
+    // to exercise the total. Real header parsing is covered in gl.test.ts.
+    glApiList: vi.fn(async (path: string, opts?: unknown) => ({
+      data: (await glApi(path, opts)) ?? [],
+      total: null,
+    })),
     glRaw: vi.fn(),
     glApiResult: vi.fn(),
     projectId: (ctx?: { project: string }) =>

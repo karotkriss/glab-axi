@@ -1,9 +1,18 @@
+import { readFileSync } from "node:fs";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Mock the gl executor so no real glab/network is touched.
 vi.mock("../src/gl.js", () => {
+  const glApi = vi.fn();
   return {
-    glApi: vi.fn(),
+    glApi,
+    // `glApiList` is `glApi` plus GitLab's X-Total header. Delegate so the path
+    // and rendering assertions below stay meaningful, and override it per-test
+    // to exercise the total. Real header parsing is covered in gl.test.ts.
+    glApiList: vi.fn(async (path: string, opts?: unknown) => ({
+      data: (await glApi(path, opts)) ?? [],
+      total: null,
+    })),
     glRaw: vi.fn(),
     glApiResult: vi.fn(),
     projectId: (ctx?: { project: string }) =>
@@ -470,5 +479,55 @@ describe("ci router", () => {
     await expect(ciCommand(["bogus"], ctx)).rejects.toThrow(
       "Unknown ci subcommand",
     );
+  });
+});
+
+describe("ci log token efficiency (AXI clause 1)", () => {
+  // GitLab wraps trace lines in colour codes and `\e[0K` section markers.
+  const ESC = "\u001B";
+
+  it("strips the ANSI escapes GitLab traces are dense with", async () => {
+    glRawMock.mockResolvedValueOnce(
+      `${ESC}[0KRunning with gitlab-runner${ESC}[0;m\n` +
+        `${ESC}[31;1mERROR: Job failed: exit code 3${ESC}[0;m\n`,
+    );
+    const out = await ciCommand(["log", "48021"], ctx);
+    expect(out).toContain("ERROR: Job failed: exit code 3");
+    expect(out).toContain("Running with gitlab-runner");
+    expect(out).not.toContain(ESC);
+    expect(out).not.toContain("[0K");
+    expect(out).not.toContain("31;1m");
+  });
+
+  it("spills a truncated trace to a file and points the agent at it to grep", async () => {
+    const trace = `${ESC}[0K` + "x".repeat(30000) + "\nboom\n";
+    glRawMock.mockResolvedValueOnce(trace);
+    const out = await ciCommand(["log", "48021"], ctx);
+
+    expect(out).toContain("truncated: true");
+    const match = out.match(/full_log: (\S+)/);
+    expect(match).not.toBeNull();
+
+    // The path is only worth printing if the file is really there holding the
+    // whole trace - stripped, so a grep of it matches what the agent was shown.
+    const spilled = readFileSync(match![1], "utf-8");
+    expect(spilled).not.toContain(ESC);
+    expect(spilled).toContain("boom");
+    expect(spilled.length).toBe(30000 + "\nboom\n".length);
+
+    expect(out).toContain("grep it for earlier context");
+  });
+
+  it("measures the log it actually shows, not the raw ANSI byte count", async () => {
+    glRawMock.mockResolvedValueOnce(`${ESC}[0K` + "x".repeat(25000));
+    const out = await ciCommand(["log", "48021"], ctx);
+    expect(out).toContain("original_length: 25000");
+  });
+
+  it("leaves a short log untruncated with no spill file", async () => {
+    glRawMock.mockResolvedValueOnce("all good\n");
+    const out = await ciCommand(["log", "48021"], ctx);
+    expect(out).toContain("truncated: false");
+    expect(out).not.toContain("full_log");
   });
 });
