@@ -111,9 +111,20 @@ describe("ci list", () => {
     const path = glApiMock.mock.calls[0][0] as string;
     expect(path).toContain(`projects/${PID}/pipelines`);
     expect(path).toContain("per_page=20");
-    expect(path).toContain("order_by=updated_at");
+    expect(path).toContain("order_by=id");
     expect(out).toContain("count: 2");
     expect(out).toContain("pipelines[2]");
+  });
+
+  // Regression: `order_by=updated_at` 500s on projects with a huge pipelines
+  // table (verified live against gitlab-org/gitlab), i.e. exactly the projects
+  // with the most CI history. The sibling issue/mr list endpoints are NOT
+  // affected and deliberately keep their own ordering.
+  it("never orders pipelines by updated_at", async () => {
+    glApiMock.mockResolvedValueOnce([pipeline()]);
+    await ciCommand(["list"], ctx);
+    const path = glApiMock.mock.calls[0][0] as string;
+    expect(path).not.toContain("updated_at");
   });
 
   it("renders an 8-char short sha (custom slice)", async () => {
