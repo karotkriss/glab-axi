@@ -187,6 +187,16 @@ describe("unknown flags are rejected (AXI clause 6)", () => {
       expect(code, argv.join(" ")).toBe(2);
     }
   });
+
+  it("rejects the equals form for a boolean flag instead of silently no-op'ing the filter", async () => {
+    // Live evidence of the bug: `mr list --draft` filtered to drafts, but
+    // `mr list --draft=true` was silently accepted and returned everything.
+    const { out, code } = await cli("mr", "list", "--draft=true");
+    expect(code).toBe(2);
+    expect(out).toContain("--draft");
+    expect(out).toContain("boolean");
+    expect(glApiMock).not.toHaveBeenCalled();
+  });
 });
 
 describe("what the guard must not break", () => {
@@ -211,6 +221,36 @@ describe("what the guard must not break", () => {
     const { code } = await cli("issue", "list", "--state=closed");
     expect(code).toBe(0);
     expect(String(glApiMock.mock.calls[0][0])).toContain("state=closed");
+  });
+
+  it("accepts a value-taking flag passed bare (no `=`)", async () => {
+    const { code } = await cli("mr", "list", "--draft");
+    expect(code).toBe(0);
+    expect(glApiMock).toHaveBeenCalled();
+  });
+
+  // Regression: a single-dash positional (a free-text search query starting
+  // with a negative number, version, or flag-shaped word) must not be treated
+  // as a flag candidate - only `--`-leading tokens are. Verified live: this
+  // returned `count: 30 of 47` on the parent commit and must keep working.
+  it("lets a dash-leading positional flow through as free text, not a flag", async () => {
+    const { code } = await cli("search", "issues", "-1 login crash");
+    expect(code).toBe(0);
+    expect(glApiMock).toHaveBeenCalled();
+    const url = String(glApiMock.mock.calls[0][0]);
+    expect(url).toContain(
+      new URLSearchParams({ search: "-1 login crash" }).toString(),
+    );
+  });
+
+  it("keeps the same free-text handling when the dash-leading query is unquoted", async () => {
+    const { code } = await cli("search", "issues", "-1", "login", "crash");
+    expect(code).toBe(0);
+    expect(glApiMock).toHaveBeenCalled();
+    const url = String(glApiMock.mock.calls[0][0]);
+    expect(url).toContain(
+      new URLSearchParams({ search: "-1 login crash" }).toString(),
+    );
   });
 
   it("leaves `api` alone - it is the deliberate raw passthrough", async () => {

@@ -121,11 +121,11 @@ subcommands[5]:
 flags{list}:
   --limit <n> (default 30)
 flags{view}:
-  --full (full release notes / description)
+  --full! (full release notes / description)
 flags{create}:
-  --name <text>, --body <text> or --body-file <path>, --target <commit|branch> (source for a new tag; alias --ref), --prerelease (mark "upcoming" via a future released_at), --asset <url>[#name] (attach an asset link, repeatable), --draft | --generate-notes (GitHub concepts; refused with guidance)
+  --name <text>, --body <text> or --body-file <path>, --target <commit|branch> (source for a new tag; alias --ref), --prerelease! (mark "upcoming" via a future released_at), --asset <url>[#name] (attach an asset link, repeatable), --draft! | --generate-notes! (GitHub concepts; refused with guidance)
 flags{edit,update}:
-  --name <text>, --body <text> or --body-file <path>, --prerelease, --draft | --generate-notes (refused with guidance); at least one of name/body/prerelease is required
+  --name <text>, --body <text> or --body-file <path>, --prerelease!, --draft! | --generate-notes! (refused with guidance); at least one of name/body/prerelease is required
 flags{delete}:
   (none)
 notes:

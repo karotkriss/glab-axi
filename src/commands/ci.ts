@@ -190,7 +190,7 @@ flags{status}:
 flags{watch}:
   --interval <seconds> (default 8), --timeout <seconds> (default 1800)
 flags{log}:
-  --full (return the entire trace instead of the last 20000 chars)
+  --full! (return the entire trace instead of the last 20000 chars)
 flags{run}:
   --ref <branch|tag> (default: the project's default branch), --field <KEY=value> (pipeline variable, repeatable)
 notes:
