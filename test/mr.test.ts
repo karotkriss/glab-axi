@@ -28,7 +28,7 @@ vi.mock("../src/gl.js", () => {
 
 import { mrCommand } from "../src/commands/mr.js";
 import { glApi, glApiResult, runJq } from "../src/gl.js";
-import { AxiError } from "../src/errors.js";
+import { AxiError, exitCodeForError, mapGlError } from "../src/errors.js";
 import type { RepoContext } from "../src/context.js";
 
 const glApiMock = glApi as unknown as ReturnType<typeof vi.fn>;
@@ -305,6 +305,43 @@ describe("mr merge", () => {
       "has not met its required approvals",
     );
     expect((err as AxiError).message).not.toContain("needs a rebase");
+  });
+
+  // GitLab refuses a conflicted merge with HTTP 405, which carries no cause and
+  // no path, so `mapGlError` can only call it UNKNOWN. The verb layer knows both
+  // and must supply the code. Verbatim live output, gitlab.com 2026-07-15.
+  const merge405 = () =>
+    mapGlError(
+      'glab: 405 Method Not Allowed (HTTP 405)\n{"message":"405 Method Not Allowed"}',
+      1,
+    );
+
+  it("types a conflicted merge as CONFLICT, not UNKNOWN", async () => {
+    expect(merge405().code).toBe("UNKNOWN"); // what the status alone can prove
+    glApiMock.mockResolvedValueOnce(
+      mr({ detailed_merge_status: "conflict", has_conflicts: true }),
+    ); // state check
+    glApiMock.mockRejectedValueOnce(merge405()); // merge PUT refused
+    const err = (await mrCommand(["merge", "42"], ctx).catch(
+      (e) => e,
+    )) as AxiError;
+    expect(err.code).toBe("CONFLICT");
+    expect(err.message).toContain("has conflicts with");
+    // Same conflict, same command: --rebase already reports CONFLICT, so the
+    // plain path must agree rather than exit differently on an unrelated flag.
+    expect(exitCodeForError(err)).toBe(1);
+  });
+
+  it("keeps a non-conflict blocker's own code rather than calling it CONFLICT", async () => {
+    glApiMock.mockResolvedValueOnce(
+      mr({ detailed_merge_status: "not_approved" }),
+    );
+    glApiMock.mockRejectedValueOnce(merge405());
+    const err = (await mrCommand(["merge", "42"], ctx).catch(
+      (e) => e,
+    )) as AxiError;
+    expect(err.code).toBe("UNKNOWN");
+    expect(err.message).toContain("has not met its required approvals");
   });
 
   it("rejects more than one merge method", async () => {

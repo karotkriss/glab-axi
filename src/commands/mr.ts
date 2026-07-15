@@ -716,17 +716,26 @@ async function waitForRebase(iid: number, ctx?: RepoContext): Promise<Json> {
  * the coarse flags as a fallback for instances that omit it. Returns undefined
  * when the payload names no cause: the caller then keeps GitLab's own message
  * rather than inventing a diagnosis it cannot support.
+ *
+ * A blocker may carry the error `code` its cause proves. This is the only place
+ * that can: GitLab answers a refused merge with HTTP 405, which `mapGlError`
+ * cannot classify from the status alone - the identical 405 also comes back for
+ * an already-merged MR - so the code is derived from the MR state we verified,
+ * never from the status.
  */
 function mergeBlocker(
   mr: Json,
   iid: number,
   ctx?: RepoContext,
-): { reason: string; fix?: string } | undefined {
+): { reason: string; fix?: string; code?: string } | undefined {
   const target = String(mr.target_branch ?? "the target branch");
   const r = repoFlag({ domain: "mr", action: "merge", repo: ctx });
   const conflict = {
     reason: `has conflicts with ${target}`,
     fix: `Resolve the conflicts on ${mr.source_branch ?? "the source branch"} locally, push, then re-run \`glab-axi mr merge ${iid}${r}\``,
+    // Matches the code `waitForRebase` already throws when a rebase hits the
+    // same conflict, so both paths of `mr merge` report it identically.
+    code: "CONFLICT",
   };
   const draft = {
     reason: "is marked draft",
@@ -736,7 +745,10 @@ function mergeBlocker(
     reason: "has unresolved discussion threads",
     fix: `Run \`glab-axi mr view ${iid} --reviews${r}\` to see the unresolved threads`,
   };
-  const byStatus: Record<string, { reason: string; fix?: string }> = {
+  const byStatus: Record<
+    string,
+    { reason: string; fix?: string; code?: string }
+  > = {
     conflict,
     broken_status: conflict,
     draft_status: draft,
@@ -796,7 +808,7 @@ function explainMergeFailure(
   }
   return new AxiError(
     `Merge request !${iid} ${blocker.reason} and cannot be merged`,
-    err.code,
+    blocker.code ?? err.code,
     [blocker.fix, view].filter((l): l is string => l !== undefined),
   );
 }
