@@ -208,7 +208,7 @@ subcommands[4]:
 maps to plain (unmasked) GitLab CI/CD variables - use \`secret\` for masked ones
 flags{list}:
   --limit <n> (default 100)
-flags{get,set,delete}:
+flags{get,view,set,delete,rm}:
   --env <scope> (environment scope, default "*")
 flags{set}:
   --value <value> (required; reads from piped stdin if omitted), --protected
@@ -377,6 +377,6 @@ export async function variableCommand(
     case undefined:
       return VARIABLE_HELP;
     default:
-      return refuseSubcommand("variable", sub);
+      return refuseSubcommand("variable", sub, VARIABLE_HELP);
   }
 }

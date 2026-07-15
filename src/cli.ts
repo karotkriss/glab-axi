@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runAxiCli } from "axi-sdk-js";
 import { AxiError, exitCodeForError } from "./errors.js";
+import { rejectUnknownFlags } from "./args.js";
 import { renderError } from "./toon.js";
 import { resolveRepo, type RepoContext } from "./context.js";
 import { homeCommand } from "./commands/home.js";
@@ -134,10 +135,28 @@ function readPackageVersion(): string {
 }
 
 function withRepoContext(
-  _command: string | undefined,
+  command: string | undefined,
   handler: Cmd,
 ): (args: string[], ctx: RepoContext | undefined) => Promise<string> | string {
-  return (args, ctx) => handler(parseRepoContextArgs(args).strippedArgs, ctx);
+  return (args, ctx) => {
+    const { strippedArgs } = parseRepoContextArgs(args);
+    // The one place every command routes through, so unknown flags are rejected
+    // here rather than in each handler - and before the handler makes any call.
+    // `api` opts out: it is the deliberate raw passthrough, forwarding arbitrary
+    // flags to GitLab, so it has no closed flag set to validate against.
+    if (command !== undefined && command !== "api") {
+      const help = COMMAND_HELP[command];
+      if (help !== undefined) {
+        rejectUnknownFlags(
+          help,
+          command,
+          strippedArgs[0],
+          strippedArgs.slice(1),
+        );
+      }
+    }
+    return handler(strippedArgs, ctx);
+  };
 }
 
 /** Extract and strip the `-R`/`--repo` flag (in space or equals form). */

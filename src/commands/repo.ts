@@ -261,6 +261,6 @@ export async function repoCommand(
     case undefined:
       return REPO_HELP;
     default:
-      return refuseSubcommand("repo", sub);
+      return refuseSubcommand("repo", sub, REPO_HELP);
   }
 }

@@ -668,6 +668,6 @@ export async function ciCommand(
     case undefined:
       return CI_HELP;
     default:
-      return refuseSubcommand("ci", sub);
+      return refuseSubcommand("ci", sub, CI_HELP);
   }
 }

@@ -1,4 +1,5 @@
 import { AxiError } from "./errors.js";
+import { parseHelpFlags } from "./args.js";
 
 // ---------------------------------------------------------------------------
 // Deliberate refusals, at the VERB layer.
@@ -248,23 +249,42 @@ const REFUSALS: Record<string, Record<string, Refusal>> = {
  *
  * Always throws (exit 2). A usage error must not exit 0 - an agent that checks
  * the exit code would read a mistyped verb as success.
+ *
+ * Pass the domain's HELP text to have the generic error inline the valid
+ * subcommands, or a ready-made fallback to replace the generic error outright
+ * (`search` names its list "types", not subcommands).
  */
 export function refuseSubcommand(
   domain: string,
   sub: string,
-  fallback?: { message: string; help: string[] },
+  helpOrFallback?: string | { message: string; help: string[] },
 ): never {
   const refusal = REFUSALS[domain]?.[sub];
   if (refusal) {
     throw new AxiError(refusal.reason, "VALIDATION_ERROR", refusal.help);
   }
+  const isHelp = typeof helpOrFallback === "string";
+  const fallback = isHelp ? undefined : helpOrFallback;
   throw new AxiError(
     fallback?.message ?? `Unknown ${domain} subcommand: ${sub}`,
     "VALIDATION_ERROR",
-    fallback?.help ?? [
-      `Run \`glab-axi ${domain} --help\` to see available subcommands`,
-    ],
+    fallback?.help ?? genericHelp(domain, isHelp ? helpOrFallback : undefined),
   );
+}
+
+/**
+ * Inline the valid subcommands rather than pointing at `--help`.
+ *
+ * A pointer to `--help` costs the agent a round trip to learn what it could
+ * have been told here (AXI clause 9), so the set is spelled out whenever the
+ * caller hands over the help text to read it from.
+ */
+function genericHelp(domain: string, help?: string): string[] {
+  const subs = help === undefined ? [] : [...parseHelpFlags(help).subs].sort();
+  if (subs.length === 0) {
+    return [`Run \`glab-axi ${domain} --help\` to see available subcommands`];
+  }
+  return [`Valid \`glab-axi ${domain}\` subcommands: ${subs.join(", ")}`];
 }
 
 /** The refusal table, for tests that assert every suggestion is runnable. */

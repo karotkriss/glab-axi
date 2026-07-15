@@ -145,7 +145,7 @@ flags{links}:
   --limit <n> (default 30) - lists related/blocking/blocked-by issues with their relation, iid, title, state
 flags{create}:
   --title <text> (required), --body <text> or --body-file <path>, --label <a,b>, --assignee <user>, --milestone <name>, --confidential
-flags{edit}:
+flags{edit,update}:
   --title, --body or --body-file, --label, --assignee <user>, --milestone <name>
 flags{close}:
   (none)
@@ -494,6 +494,6 @@ export async function issueCommand(
     case undefined:
       return ISSUE_HELP;
     default:
-      return refuseSubcommand("issue", sub);
+      return refuseSubcommand("issue", sub, ISSUE_HELP);
   }
 }

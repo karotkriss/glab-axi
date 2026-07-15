@@ -38,7 +38,9 @@ export const SECRET_HELP = `usage: glab-axi secret <subcommand> [flags]
 subcommands[3]:
   list, set <name>, delete <name>
 maps to masked & protected GitLab CI/CD variables; \`list\` never reveals values
-flags{set,delete}:
+flags{list}:
+  --limit <n> (default 100)
+flags{set,delete,rm}:
   --env <scope> (environment scope, default "*")
 flags{set}:
   --value <value> (required; reads from piped stdin if omitted)
@@ -159,6 +161,6 @@ export async function secretCommand(
     case undefined:
       return SECRET_HELP;
     default:
-      return refuseSubcommand("secret", sub);
+      return refuseSubcommand("secret", sub, SECRET_HELP);
   }
 }
