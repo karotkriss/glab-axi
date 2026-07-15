@@ -10,6 +10,8 @@ Agents drive CLIs by reading stdout. Raw `glab`/REST output is verbose JSON full
 - **TOON, not JSON** - ~40% fewer tokens, still readable.
 - **Minimal schemas** - lists default to 3-5 fields; ask for more with `--fields a,b,c`.
 - **Pre-computed aggregates** - pipeline views report `checks: N passed, M failed, K running` and an at-a-glance verdict, so an agent never has to count jobs.
+- **Real totals, not guesses** - list output reads GitLab's own count (`count: 30 of 847 total`) instead of restating the `--limit` it was just given.
+- **Bounded, greppable CI logs** - `ci log` strips ANSI noise and truncates to a token-safe tail; a truncated trace also spills the full log to a local file the agent can grep instead of paying for it in context.
 - **Idempotent mutations** - closing a closed issue or merging a merged MR is a no-op with exit 0.
 - **Definitive empty states** and **contextual `help[]` suggestions** on every list and mutation.
 - **Structured errors on stdout** - actionable, and they never leak the underlying tool's name.
@@ -127,7 +129,7 @@ A git remote only resolves to a project when its host is one the `glab` CLI is a
 
 `mr view`, `mr checks`, and `mr diff` also accept a full merge request URL in place of the IID (e.g. `glab-axi mr view https://gitlab.example.com/group/project/-/merge_requests/42`); the URL's own host/project target the request, unless an explicit `-R` flag overrides it.
 
-`mr view --reviews` adds approval state (who approved, approvals given/required) and discussion-thread resolution counts. `mr diff` prints a bounded per-file summary (path, status, `+`/`-` line counts) by default; `--full` emits the complete reconstructed unified diff. `mr merge --auto` sets GitLab's merge-when-pipeline-succeeds: it merges immediately if there is no pipeline (or it already passed), otherwise it defers and reports the scheduled state instead of a merge commit SHA; it cannot combine with `--rebase`. `mr list` and `mr view` accept the same `--jq`/`--json` escape hatches as `api` (see below).
+`mr view --reviews` adds approval state (who approved, approvals given/required) and discussion-thread resolution counts. `mr diff` prints a bounded per-file summary (path, status, `+`/`-` line counts) by default; `--full` emits the complete reconstructed unified diff. `mr merge --auto` sets GitLab's merge-when-pipeline-succeeds: it merges immediately if there is no pipeline (or it already passed), otherwise it defers and reports the scheduled state instead of a merge commit SHA; it cannot combine with `--rebase`. When GitLab refuses a merge, the error names the specific cause (conflicts, a draft MR, unresolved discussions, missing approvals, a pipeline that hasn't passed, and so on) plus the command that clears it, instead of GitLab's opaque "Branch cannot be merged". `mr list` and `mr view` accept the same `--jq`/`--json` escape hatches as `api` (see below).
 
 ```sh
 # explicit host + project
