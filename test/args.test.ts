@@ -266,6 +266,33 @@ describe("what the guard must not break", () => {
     expect(out).not.toContain("Unknown flag");
     expect(out).toContain("draft");
   });
+
+  // Regression: --template takes a value (`--template owner/repo`, mirroring
+  // gh) and must reach its own "template not supported" refusal in both the
+  // bare and equals forms - not the boolean-equals error, which would wrongly
+  // tell the caller to "pass it bare" and silently drop the flag instead.
+  it("reaches its own refusal for a value-taking refused flag, not the boolean-equals error", async () => {
+    const bare = await cli(
+      "project",
+      "create",
+      "group/name",
+      "--template",
+      "org/tpl",
+    );
+    expect(bare.code).toBe(2);
+    expect(bare.out).not.toContain("boolean flag");
+    expect(bare.out).toContain("template");
+
+    const equals = await cli(
+      "project",
+      "create",
+      "group/name",
+      "--template=org/tpl",
+    );
+    expect(equals.code).toBe(2);
+    expect(equals.out).not.toContain("boolean flag");
+    expect(equals.out).toContain("template");
+  });
 });
 
 // ---------------------------------------------------------------------------
