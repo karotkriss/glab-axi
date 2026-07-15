@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The README now leads with the agent skill install (`npx skills add karotkriss/glab-axi --skill glab-axi -g`) in a new Quick Start section, since that - not the npm CLI install - is how an agent actually gets glab-axi. The npm install, the zero-setup `npx -y glab-axi` form, and the `setup hooks` SessionStart hook are still documented, now under "Other ways to install".
 - npm publishing now authenticates with npm Trusted Publishing (OIDC) instead of a long-lived `NPM_TOKEN` secret. The registry mints a short-lived credential from the release workflow's GitHub Actions identity, so no npm token is stored in the repo and none needs to be rotated. Maintainers register the trusted publisher once on npmjs.com against this repo, the `release.yml` filename, and the `npm-publish` environment; see the `glab-axi-release` skill.
 - The release workflow pins Node 24 and asserts the resolved Node and npm against the trusted-publishing floors (Node >= 22.14.0, npm >= 11.5.1) before it reaches the publish step. No Node 22 release bundles an npm that new, so Node 24 is the lowest line that clears both without an extra upgrade step. This is the CI publisher's floor only and does not change the Node range the package supports for its users.
 - The release workflow no longer passes `--provenance`; trusted publishing generates and signs provenance by default from GitHub Actions. Published packages keep their provenance attestation.
