@@ -5,16 +5,18 @@ name: Release
 # release-creation time (see skills/glab-axi-release/SKILL.md); this workflow
 # only handles the npm publish.
 #
-# Auth uses NPM_TOKEN as an ENVIRONMENT secret on the `npm-publish` environment.
-# A maintainer must create a GitHub Actions Environment named exactly
-# `npm-publish` (Settings -> Environments) and add NPM_TOKEN to it. The job's
-# `environment:` name and the environment holding the secret must match, or
-# ${{ secrets.NPM_TOKEN }} resolves to empty and publishing fails.
+# Auth uses NPM_TOKEN. Because this job declares `environment: npm-publish`, it
+# can read organization secrets, repository secrets, and secrets on the
+# `npm-publish` environment; an environment secret of that name takes precedence
+# over a repository secret. So NPM_TOKEN may live in either place:
+#   - Environment secret on `npm-publish` (preferred): scopes the token to jobs
+#     declaring that environment, and allows environment protection rules.
+#   - Repository secret: works, but every workflow in the repo can read it.
 # id-token: write enables --provenance for supply-chain trust.
 #
 # workflow_dispatch runs the same pipeline in dry-run mode (the default): it
-# packs and validates the tarball and checks that the environment secret
-# authenticates, without uploading anything. A real publish happens only on
+# packs and validates the tarball and checks that the token authenticates,
+# without uploading anything. A real publish happens only on
 # `release: published`, so a dispatch with dry_run disabled is just a
 # build/test smoke run.
 

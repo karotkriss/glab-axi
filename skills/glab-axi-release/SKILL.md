@@ -15,26 +15,30 @@ source of truth for the notes.
 
 ## One-time setup (maintainer)
 
-The publish job runs in a GitHub Actions **Environment named exactly
-`npm-publish`** and reads `NPM_TOKEN` as an **environment secret** on it - not a
-repository secret. Both pieces are required:
+The publish job authenticates to npm with an `NPM_TOKEN` secret holding an npm
+automation token with publish rights. Because the job declares
+`environment: npm-publish`, it can read organization secrets, repository
+secrets, and secrets on the `npm-publish` environment. An environment secret
+named `NPM_TOKEN` takes precedence over a repository secret of the same name,
+so either placement authenticates:
 
-1. **Create the environment.** GitHub -> Settings -> Environments -> New
-   environment, named `npm-publish`. The name must match the `environment:`
-   value in `.github/workflows/release.yml` exactly; if it does not,
-   `${{ secrets.NPM_TOKEN }}` resolves to an empty string and publishing fails.
-2. **Add the secret to that environment.** On the `npm-publish` environment's
-   page -> Environment secrets -> Add secret, named `NPM_TOKEN`, holding an npm
-   automation token with publish rights.
+1. **Environment secret on `npm-publish` (preferred).** GitHub -> Settings ->
+   Environments -> the `npm-publish` environment -> Environment secrets -> Add
+   secret, named `NPM_TOKEN`. Preferred because it scopes the token to jobs
+   declaring that environment, and it lets you attach environment protection
+   rules (required reviewers, wait timers, branch restrictions) to publishing.
+2. **Repository secret.** GitHub -> Settings -> Secrets and variables ->
+   Actions -> New repository secret, named `NPM_TOKEN`. This works, but the
+   token is then readable by every workflow in the repo.
 
-Without both, every release run fails at the publish step. Do not commit the
+If `NPM_TOKEN` is in neither place, the publish step fails. Do not commit the
 token anywhere.
 
 ## Test the pipeline without publishing (dry run)
 
-Verify the environment secret and the whole publish path before cutting the
-first real release. The workflow's `workflow_dispatch` trigger has a `dry_run`
-input that defaults to **true**:
+Verify the token and the whole publish path before cutting the first real
+release. The workflow's `workflow_dispatch` trigger has a `dry_run` input that
+defaults to **true**:
 
 ```sh
 gh workflow run release.yml -f dry_run=true
@@ -42,13 +46,14 @@ gh run watch "$(gh run list --workflow=release.yml --limit 1 --json databaseId -
 ```
 
 A dry run does the full checkout, install, build, and test, then runs
-`npm whoami` (confirming the environment secret authenticates - it prints the
-npm username, never the token) and `npm publish --dry-run` (packs and validates
-the tarball). **Nothing is uploaded.** A green dry run means the environment,
-the secret, and the publish pipeline are all wired correctly.
+`npm whoami` (confirming the token authenticates - it prints the npm username,
+never the token) and `npm publish --dry-run` (packs and validates the tarball).
+**Nothing is uploaded.** A green dry run means the token and the publish
+pipeline are wired correctly.
 
-If it fails at `npm whoami`, the `npm-publish` environment or its `NPM_TOKEN`
-secret is missing, misnamed, or the token is expired (see one-time setup).
+If it fails at `npm whoami`, `NPM_TOKEN` is missing from both the `npm-publish`
+environment and the repository secrets, is misnamed, or the token is expired
+(see one-time setup).
 
 ## Cut a release
 
@@ -125,10 +130,9 @@ in `CHANGELOG.md`. Run from a clean checkout of the default branch.
 
    If the run failed at the build or test step, that's an unrelated code issue
    to fix and re-release, not an `NPM_TOKEN` problem. If it got past those and
-   failed at the publish step, the usual cause is the `npm-publish` environment
-   or its `NPM_TOKEN` environment secret being missing, misnamed, or expired
-   (see one-time setup above); a dry run diagnoses that without burning a
-   version.
+   failed at the publish step, the usual cause is `NPM_TOKEN` being missing,
+   misnamed, or expired (see one-time setup above); a dry run diagnoses that
+   without burning a version.
 
 ## Notes
 
