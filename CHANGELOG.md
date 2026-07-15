@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Deliberate refusals now cover verbs, not just flags: an unbuilt or GitLab-incompatible subcommand explains why and redirects to the real command, instead of a generic "Unknown `<domain>` subcommand".
+- `label edit <name>` - rename a label.
+- `release edit <tag>` - update a release.
+- `ci cancel <pipeline-id>` - cancel a running pipeline; a no-op if it already finished.
+- `ci run` - trigger a pipeline on a ref.
+- `mr unapprove <iid>` - withdraw approval from a merge request.
+
 ### Changed
 
 - The README now leads with the agent skill install (`npx skills add karotkriss/glab-axi --skill glab-axi -g`) in a new Quick Start section, since that - not the npm CLI install - is how an agent actually gets glab-axi. The npm install, the zero-setup `npx -y glab-axi` form, and the `setup hooks` SessionStart hook are still documented, now under "Other ways to install".
@@ -20,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added the CHANGELOG reference-link definitions that the release skill's step 1 requires, omitted during the 0.2.0 release prep.
 - `-R [host/]group/project` no longer rejects a namespace containing a dot. It previously decided the host by looking for a dot in the first segment, so a two-segment value like `firstname.lastname/project` (the standard username shape on LDAP/SSO GitLab instances) had its namespace mistaken for a hostname and failed to resolve. Disambiguation is now by segment count and known hosts: a two-segment value is always `group/project`; only a 3+-segment value can lead with a host, and then only when it's a host `glab` is already configured for (`src/hosts.ts`) or, as a last resort, contains a dot.
 - Every `-R`-flag suggestion in `help[]` output now emits a runnable command. `repoFlag()` previously returned `-R <target>` interpolated right after the binary name (e.g. `glab-axi -R host/group/project issue list`), which the CLI's own parser rejects since flags must come after the command. Suggestions now place `-R` at the end of the command.
+- An unknown or refused subcommand exited 0; it now exits 2, so a mistyped verb no longer reads as success to a caller checking the exit code.
+- `variable set` / `secret set` reported `updated` for a write that changed nothing. An unchanged value now skips the write and reports `already: true`.
 
 ## [0.2.0] - 2026-07-15
 
