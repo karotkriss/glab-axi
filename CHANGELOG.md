@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Validation lands before the call, so a typo'd `--env` can no longer write a CI/CD variable to every environment scope instead of the one named.
   `api` is exempt: it is the deliberate raw passthrough.
 - A flag is now rejected when it belongs to a different subcommand of the same command, and says which one: `issue view 42 --state closed` names `--state` as a flag of `issue list`.
+- A boolean flag passed in `=` form (e.g. `mr list --draft=true`) is now rejected naming the flag, instead of being silently accepted while the filter it was meant to set never applies.
 - The generic unknown-subcommand error now inlines the valid subcommands instead of pointing at `--help`, which cost the agent a round trip to learn what it could have been told immediately (AXI principle 9).
 - `secret list --limit` is now documented; it was honoured but absent from `secret --help`.
 - The `mr list`/`mr view` `--raw` alias of `--json`, and the `update`/`edit`, `delete`/`rm`, and `get`/`view` subcommand aliases, are now documented rather than working undocumented.
