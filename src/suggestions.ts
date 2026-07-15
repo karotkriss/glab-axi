@@ -10,7 +10,14 @@ export interface SuggestionCtx {
   branch?: string;
 }
 
-/** Reconstruct a `-R` target string for carry-forward in suggestions. */
+/**
+ * Reconstruct a `-R` target string for carry-forward in suggestions.
+ *
+ * Append this at the END of a suggested command, never straight after the
+ * binary name: `-R` must follow the command word, and the pre-command form
+ * (`glab-axi -R host/group/project issue list`) is rejected by our own parser.
+ * A suggestion that errors is worse than no suggestion at all.
+ */
 export function repoFlag(c: SuggestionCtx): string {
   const r = c.repo;
   if (r && r.source === "flag") {
@@ -38,66 +45,66 @@ const table: Entry[] = [
   {
     match: (c) => c.domain === "issue" && c.action === "list" && !c.isEmpty,
     lines: (c) => [
-      `Run \`glab-axi${repoFlag(c)} issue view <iid>\` to view details`,
-      `Run \`glab-axi${repoFlag(c)} issue create --title "..." --body-file <path>\` to create`,
+      `Run \`glab-axi issue view <iid>${repoFlag(c)}\` to view details`,
+      `Run \`glab-axi issue create --title "..." --body-file <path>${repoFlag(c)}\` to create`,
     ],
   },
   {
     match: (c) =>
       c.domain === "issue" && c.action === "list" && c.isEmpty === true,
     lines: (c) => [
-      `Run \`glab-axi${repoFlag(c)} issue create --title "..." --body-file <path>\` to create an issue`,
-      `Run \`glab-axi${repoFlag(c)} issue list --state closed\` to see closed issues`,
+      `Run \`glab-axi issue create --title "..." --body-file <path>${repoFlag(c)}\` to create an issue`,
+      `Run \`glab-axi issue list --state closed${repoFlag(c)}\` to see closed issues`,
     ],
   },
   {
     match: (c) =>
       c.domain === "issue" && c.action === "view" && c.state === "opened",
     lines: (c) => [
-      `Run \`glab-axi${repoFlag(c)} issue comment ${c.id} --body-file <path>\` to comment`,
-      `Run \`glab-axi${repoFlag(c)} issue close ${c.id}\` to close`,
-      `Run \`glab-axi${repoFlag(c)} issue edit ${c.id} --assignee <user>\` to assign`,
+      `Run \`glab-axi issue comment ${c.id} --body-file <path>${repoFlag(c)}\` to comment`,
+      `Run \`glab-axi issue close ${c.id}${repoFlag(c)}\` to close`,
+      `Run \`glab-axi issue edit ${c.id} --assignee <user>${repoFlag(c)}\` to assign`,
     ],
   },
   {
     match: (c) =>
       c.domain === "issue" && c.action === "view" && c.state === "closed",
     lines: (c) => [
-      `Run \`glab-axi${repoFlag(c)} issue reopen ${c.id}\` to reopen`,
-      `Run \`glab-axi${repoFlag(c)} issue comment ${c.id} --body-file <path>\` to comment`,
+      `Run \`glab-axi issue reopen ${c.id}${repoFlag(c)}\` to reopen`,
+      `Run \`glab-axi issue comment ${c.id} --body-file <path>${repoFlag(c)}\` to comment`,
     ],
   },
   {
     match: (c) => c.domain === "issue" && c.action === "links",
     lines: (c) => [
-      `Run \`glab-axi${repoFlag(c)} issue view <iid>\` to view a linked issue`,
-      `Run \`glab-axi${repoFlag(c)} issue view ${c.id}\` to see the source issue`,
+      `Run \`glab-axi issue view <iid>${repoFlag(c)}\` to view a linked issue`,
+      `Run \`glab-axi issue view ${c.id}${repoFlag(c)}\` to see the source issue`,
     ],
   },
   {
     match: (c) => c.domain === "issue" && c.action === "create",
     lines: (c) => [
-      `Run \`glab-axi${repoFlag(c)} issue view ${c.id}\` to see the full issue`,
-      `Run \`glab-axi${repoFlag(c)} issue edit ${c.id} --label <label>\` to label`,
+      `Run \`glab-axi issue view ${c.id}${repoFlag(c)}\` to see the full issue`,
+      `Run \`glab-axi issue edit ${c.id} --label <label>${repoFlag(c)}\` to label`,
     ],
   },
   {
     match: (c) => c.domain === "issue" && c.action === "close",
     lines: (c) => [
-      `Run \`glab-axi${repoFlag(c)} issue reopen ${c.id}\` to reopen`,
+      `Run \`glab-axi issue reopen ${c.id}${repoFlag(c)}\` to reopen`,
     ],
   },
   {
     match: (c) => c.domain === "issue" && c.action === "reopen",
     lines: (c) => [
-      `Run \`glab-axi${repoFlag(c)} issue close ${c.id}\` to close`,
+      `Run \`glab-axi issue close ${c.id}${repoFlag(c)}\` to close`,
     ],
   },
   {
     match: (c) =>
       c.domain === "issue" && (c.action === "edit" || c.action === "comment"),
     lines: (c) => [
-      `Run \`glab-axi${repoFlag(c)} issue view ${c.id}\` to see the issue`,
+      `Run \`glab-axi issue view ${c.id}${repoFlag(c)}\` to see the issue`,
     ],
   },
 
@@ -105,66 +112,66 @@ const table: Entry[] = [
   {
     match: (c) => c.domain === "mr" && c.action === "list" && !c.isEmpty,
     lines: (c) => [
-      `Run \`glab-axi${repoFlag(c)} mr view <iid>\` to view details`,
-      `Run \`glab-axi${repoFlag(c)} mr create --title "..." --source-branch <b>\` to create`,
+      `Run \`glab-axi mr view <iid>${repoFlag(c)}\` to view details`,
+      `Run \`glab-axi mr create --title "..." --source-branch <b>${repoFlag(c)}\` to create`,
     ],
   },
   {
     match: (c) =>
       c.domain === "mr" && c.action === "list" && c.isEmpty === true,
     lines: (c) => [
-      `Run \`glab-axi${repoFlag(c)} mr create --title "..." --source-branch <b>\` to create a merge request`,
-      `Run \`glab-axi${repoFlag(c)} mr list --state merged\` to see merged MRs`,
+      `Run \`glab-axi mr create --title "..." --source-branch <b>${repoFlag(c)}\` to create a merge request`,
+      `Run \`glab-axi mr list --state merged${repoFlag(c)}\` to see merged MRs`,
     ],
   },
   {
     match: (c) =>
       c.domain === "mr" && c.action === "view" && c.state === "opened",
     lines: (c) => [
-      `Run \`glab-axi${repoFlag(c)} mr view ${c.id} --full\` for merge status and pipeline`,
-      `Run \`glab-axi${repoFlag(c)} mr approve ${c.id}\` to approve`,
-      `Run \`glab-axi${repoFlag(c)} mr merge ${c.id}\` to merge`,
+      `Run \`glab-axi mr view ${c.id} --full${repoFlag(c)}\` for merge status and pipeline`,
+      `Run \`glab-axi mr approve ${c.id}${repoFlag(c)}\` to approve`,
+      `Run \`glab-axi mr merge ${c.id}${repoFlag(c)}\` to merge`,
     ],
   },
   {
     match: (c) =>
       c.domain === "mr" && c.action === "view" && c.state === "merged",
     lines: (c) => [
-      `Run \`glab-axi${repoFlag(c)} mr view ${c.id} --full\` to see merge details`,
+      `Run \`glab-axi mr view ${c.id} --full${repoFlag(c)}\` to see merge details`,
     ],
   },
   {
     match: (c) =>
       c.domain === "mr" && c.action === "view" && c.state === "closed",
     lines: (c) => [
-      `Run \`glab-axi${repoFlag(c)} mr update ${c.id} --reopen\` to reopen`,
+      `Run \`glab-axi mr update ${c.id} --reopen${repoFlag(c)}\` to reopen`,
     ],
   },
   {
     match: (c) => c.domain === "mr" && c.action === "create",
     lines: (c) => [
-      `Run \`glab-axi${repoFlag(c)} mr view ${c.id} --full\` to see the merge request`,
-      `Run \`glab-axi${repoFlag(c)} ci status --mr ${c.id}\` to check its pipeline`,
+      `Run \`glab-axi mr view ${c.id} --full${repoFlag(c)}\` to see the merge request`,
+      `Run \`glab-axi ci status --mr ${c.id}${repoFlag(c)}\` to check its pipeline`,
     ],
   },
   {
     match: (c) => c.domain === "mr" && c.action === "merge",
     lines: (c) => [
-      `Run \`glab-axi${repoFlag(c)} mr view ${c.id} --full\` to confirm merged state`,
+      `Run \`glab-axi mr view ${c.id} --full${repoFlag(c)}\` to confirm merged state`,
     ],
   },
   {
     match: (c) => c.domain === "mr" && c.action === "checks",
     lines: (c) => [
-      `Run \`glab-axi${repoFlag(c)} ci status --mr ${c.id}\` for the full pipeline and jobs`,
-      `Run \`glab-axi${repoFlag(c)} mr view ${c.id} --full\` for merge status and head SHA`,
+      `Run \`glab-axi ci status --mr ${c.id}${repoFlag(c)}\` for the full pipeline and jobs`,
+      `Run \`glab-axi mr view ${c.id} --full${repoFlag(c)}\` for merge status and head SHA`,
     ],
   },
   {
     match: (c) => c.domain === "mr" && c.action === "diff",
     lines: (c) => [
-      `Run \`glab-axi${repoFlag(c)} mr view ${c.id} --reviews\` to see approvals and thread resolution`,
-      `Run \`glab-axi${repoFlag(c)} mr approve ${c.id}\` to approve`,
+      `Run \`glab-axi mr view ${c.id} --reviews${repoFlag(c)}\` to see approvals and thread resolution`,
+      `Run \`glab-axi mr approve ${c.id}${repoFlag(c)}\` to approve`,
     ],
   },
   {
@@ -174,7 +181,7 @@ const table: Entry[] = [
         c.action === "approve" ||
         c.action === "comment"),
     lines: (c) => [
-      `Run \`glab-axi${repoFlag(c)} mr view ${c.id} --full\` to see updated state`,
+      `Run \`glab-axi mr view ${c.id} --full${repoFlag(c)}\` to see updated state`,
     ],
   },
 
@@ -182,15 +189,15 @@ const table: Entry[] = [
   {
     match: (c) => c.domain === "ci" && c.action === "list" && !c.isEmpty,
     lines: (c) => [
-      `Run \`glab-axi${repoFlag(c)} ci view <id>\` to see pipeline jobs`,
-      `Run \`glab-axi${repoFlag(c)} ci status --branch <b>\` for the latest pipeline on a branch`,
+      `Run \`glab-axi ci view <id>${repoFlag(c)}\` to see pipeline jobs`,
+      `Run \`glab-axi ci status --branch <b>${repoFlag(c)}\` for the latest pipeline on a branch`,
     ],
   },
   {
     match: (c) =>
       c.domain === "ci" && c.action === "list" && c.isEmpty === true,
     lines: (c) => [
-      `Run \`glab-axi${repoFlag(c)} ci status --branch <b>\` to check a branch pipeline`,
+      `Run \`glab-axi ci status --branch <b>${repoFlag(c)}\` to check a branch pipeline`,
     ],
   },
   {
@@ -199,9 +206,9 @@ const table: Entry[] = [
     lines: (c) => {
       const pid = c.id ?? "<pipeline-id>";
       return [
-        `Run \`glab-axi${repoFlag(c)} ci jobs ${pid}\` to list jobs`,
-        `Run \`glab-axi${repoFlag(c)} ci log <job-id>\` to see a job's log`,
-        `Run \`glab-axi${repoFlag(c)} ci retry ${pid}\` to retry failed jobs`,
+        `Run \`glab-axi ci jobs ${pid}${repoFlag(c)}\` to list jobs`,
+        `Run \`glab-axi ci log <job-id>${repoFlag(c)}\` to see a job's log`,
+        `Run \`glab-axi ci retry ${pid}${repoFlag(c)}\` to retry failed jobs`,
       ];
     },
   },
@@ -210,27 +217,27 @@ const table: Entry[] = [
     lines: (c) => {
       const pid = c.id ?? "<pipeline-id>";
       return [
-        `Run \`glab-axi${repoFlag(c)} ci view ${pid}\` to inspect the finished jobs`,
-        `Run \`glab-axi${repoFlag(c)} ci log <job-id>\` to see a failed job's log`,
+        `Run \`glab-axi ci view ${pid}${repoFlag(c)}\` to inspect the finished jobs`,
+        `Run \`glab-axi ci log <job-id>${repoFlag(c)}\` to see a failed job's log`,
       ];
     },
   },
   {
     match: (c) => c.domain === "ci" && c.action === "jobs",
     lines: (c) => [
-      `Run \`glab-axi${repoFlag(c)} ci log <job-id>\` to see a job's log`,
+      `Run \`glab-axi ci log <job-id>${repoFlag(c)}\` to see a job's log`,
     ],
   },
   {
     match: (c) => c.domain === "ci" && c.action === "log",
     lines: (c) => [
-      `Run \`glab-axi${repoFlag(c)} ci log ${c.id} --full\` for the complete trace`,
+      `Run \`glab-axi ci log ${c.id} --full${repoFlag(c)}\` for the complete trace`,
     ],
   },
   {
     match: (c) => c.domain === "ci" && c.action === "retry",
     lines: (c) => [
-      `Run \`glab-axi${repoFlag(c)} ci view ${c.id}\` to monitor the retried pipeline`,
+      `Run \`glab-axi ci view ${c.id}${repoFlag(c)}\` to monitor the retried pipeline`,
     ],
   },
 
@@ -238,8 +245,8 @@ const table: Entry[] = [
   {
     match: (c) => c.domain === "project" && c.action === "view",
     lines: (c) => [
-      `Run \`glab-axi${repoFlag(c)} issue list\` to see issues`,
-      `Run \`glab-axi${repoFlag(c)} mr list\` to see merge requests`,
+      `Run \`glab-axi issue list${repoFlag(c)}\` to see issues`,
+      `Run \`glab-axi mr list${repoFlag(c)}\` to see merge requests`,
     ],
   },
   {
@@ -265,15 +272,15 @@ const table: Entry[] = [
   {
     match: (c) => c.domain === "repo" && c.action === "create-file",
     lines: (c) => [
-      `Run \`glab-axi${repoFlag(c)} repo create-branch <name> --ref ${c.branch}\` to branch from this commit`,
-      `Run \`glab-axi${repoFlag(c)} ci list --ref ${c.branch}\` to see the pipeline it triggered`,
+      `Run \`glab-axi repo create-branch <name> --ref ${c.branch}${repoFlag(c)}\` to branch from this commit`,
+      `Run \`glab-axi ci list --ref ${c.branch}${repoFlag(c)}\` to see the pipeline it triggered`,
     ],
   },
   {
     match: (c) => c.domain === "repo" && c.action === "create-branch",
     lines: (c) => [
-      `Run \`glab-axi${repoFlag(c)} repo create-file <path> --branch ${c.id} --content "..."\` to add a file to it`,
-      `Run \`glab-axi${repoFlag(c)} mr create --source-branch ${c.id} --title "..."\` to open a merge request`,
+      `Run \`glab-axi repo create-file <path> --branch ${c.id} --content "..."${repoFlag(c)}\` to add a file to it`,
+      `Run \`glab-axi mr create --source-branch ${c.id} --title "..."${repoFlag(c)}\` to open a merge request`,
     ],
   },
 
@@ -281,14 +288,14 @@ const table: Entry[] = [
   {
     match: (c) => c.domain === "label" && c.action === "list",
     lines: (c) => [
-      `Run \`glab-axi${repoFlag(c)} label create --name "..." --color "#ed9121"\` to create a label`,
+      `Run \`glab-axi label create --name "..." --color "#ed9121"${repoFlag(c)}\` to create a label`,
     ],
   },
   {
     match: (c) =>
       c.domain === "label" && (c.action === "create" || c.action === "delete"),
     lines: (c) => [
-      `Run \`glab-axi${repoFlag(c)} label list\` to see all labels`,
+      `Run \`glab-axi label list${repoFlag(c)}\` to see all labels`,
     ],
   },
 
@@ -296,44 +303,44 @@ const table: Entry[] = [
   {
     match: (c) => c.domain === "variable" && c.action === "list" && !c.isEmpty,
     lines: (c) => [
-      `Run \`glab-axi${repoFlag(c)} variable get <name>\` to see a variable's value`,
-      `Run \`glab-axi${repoFlag(c)} variable set <name> --value "..."\` to set one`,
+      `Run \`glab-axi variable get <name>${repoFlag(c)}\` to see a variable's value`,
+      `Run \`glab-axi variable set <name> --value "..."${repoFlag(c)}\` to set one`,
     ],
   },
   {
     match: (c) =>
       c.domain === "variable" && c.action === "list" && c.isEmpty === true,
     lines: (c) => [
-      `Run \`glab-axi${repoFlag(c)} variable set <name> --value "..."\` to create a variable`,
-      `Run \`glab-axi${repoFlag(c)} secret list\` to see masked CI/CD variables`,
+      `Run \`glab-axi variable set <name> --value "..."${repoFlag(c)}\` to create a variable`,
+      `Run \`glab-axi secret list${repoFlag(c)}\` to see masked CI/CD variables`,
     ],
   },
   {
     match: (c) =>
       c.domain === "variable" && c.action === "get" && c.state === "masked",
     lines: (c) => [
-      `Run \`glab-axi${repoFlag(c)} secret list\` to see masked variables (values are not shown)`,
-      `Run \`glab-axi${repoFlag(c)} variable delete ${c.id}\` to delete it`,
+      `Run \`glab-axi secret list${repoFlag(c)}\` to see masked variables (values are not shown)`,
+      `Run \`glab-axi variable delete ${c.id}${repoFlag(c)}\` to delete it`,
     ],
   },
   {
     match: (c) => c.domain === "variable" && c.action === "get",
     lines: (c) => [
-      `Run \`glab-axi${repoFlag(c)} variable set ${c.id} --value "..."\` to update it`,
-      `Run \`glab-axi${repoFlag(c)} variable delete ${c.id}\` to delete it`,
+      `Run \`glab-axi variable set ${c.id} --value "..."${repoFlag(c)}\` to update it`,
+      `Run \`glab-axi variable delete ${c.id}${repoFlag(c)}\` to delete it`,
     ],
   },
   {
     match: (c) => c.domain === "variable" && c.action === "set",
     lines: (c) => [
-      `Run \`glab-axi${repoFlag(c)} variable get ${c.id}\` to confirm the value`,
-      `Run \`glab-axi${repoFlag(c)} variable list\` to see all variables`,
+      `Run \`glab-axi variable get ${c.id}${repoFlag(c)}\` to confirm the value`,
+      `Run \`glab-axi variable list${repoFlag(c)}\` to see all variables`,
     ],
   },
   {
     match: (c) => c.domain === "variable" && c.action === "delete",
     lines: (c) => [
-      `Run \`glab-axi${repoFlag(c)} variable list\` to see remaining variables`,
+      `Run \`glab-axi variable list${repoFlag(c)}\` to see remaining variables`,
     ],
   },
 
@@ -341,27 +348,27 @@ const table: Entry[] = [
   {
     match: (c) => c.domain === "secret" && c.action === "list" && !c.isEmpty,
     lines: (c) => [
-      `Run \`glab-axi${repoFlag(c)} secret set <name> --value "..."\` to set a masked secret`,
+      `Run \`glab-axi secret set <name> --value "..."${repoFlag(c)}\` to set a masked secret`,
     ],
   },
   {
     match: (c) =>
       c.domain === "secret" && c.action === "list" && c.isEmpty === true,
     lines: (c) => [
-      `Run \`glab-axi${repoFlag(c)} secret set <name> --value "..."\` to create a masked secret`,
-      `Run \`glab-axi${repoFlag(c)} variable list\` to see plain CI/CD variables`,
+      `Run \`glab-axi secret set <name> --value "..."${repoFlag(c)}\` to create a masked secret`,
+      `Run \`glab-axi variable list${repoFlag(c)}\` to see plain CI/CD variables`,
     ],
   },
   {
     match: (c) => c.domain === "secret" && c.action === "set",
     lines: (c) => [
-      `Run \`glab-axi${repoFlag(c)} secret list\` to see all secrets`,
+      `Run \`glab-axi secret list${repoFlag(c)}\` to see all secrets`,
     ],
   },
   {
     match: (c) => c.domain === "secret" && c.action === "delete",
     lines: (c) => [
-      `Run \`glab-axi${repoFlag(c)} secret list\` to see remaining secrets`,
+      `Run \`glab-axi secret list${repoFlag(c)}\` to see remaining secrets`,
     ],
   },
 
@@ -369,33 +376,33 @@ const table: Entry[] = [
   {
     match: (c) => c.domain === "release" && c.action === "list" && !c.isEmpty,
     lines: (c) => [
-      `Run \`glab-axi${repoFlag(c)} release view <tag>\` to view details`,
-      `Run \`glab-axi${repoFlag(c)} release create <tag> --body-file <path>\` to create a release`,
+      `Run \`glab-axi release view <tag>${repoFlag(c)}\` to view details`,
+      `Run \`glab-axi release create <tag> --body-file <path>${repoFlag(c)}\` to create a release`,
     ],
   },
   {
     match: (c) =>
       c.domain === "release" && c.action === "list" && c.isEmpty === true,
     lines: (c) => [
-      `Run \`glab-axi${repoFlag(c)} release create <tag> --body-file <path>\` to create a release`,
+      `Run \`glab-axi release create <tag> --body-file <path>${repoFlag(c)}\` to create a release`,
     ],
   },
   {
     match: (c) => c.domain === "release" && c.action === "view",
     lines: (c) => [
-      `Run \`glab-axi${repoFlag(c)} release delete ${c.id}\` to delete this release`,
+      `Run \`glab-axi release delete ${c.id}${repoFlag(c)}\` to delete this release`,
     ],
   },
   {
     match: (c) => c.domain === "release" && c.action === "create",
     lines: (c) => [
-      `Run \`glab-axi${repoFlag(c)} release view ${c.id}\` to view the release`,
+      `Run \`glab-axi release view ${c.id}${repoFlag(c)}\` to view the release`,
     ],
   },
   {
     match: (c) => c.domain === "release" && c.action === "delete",
     lines: (c) => [
-      `Run \`glab-axi${repoFlag(c)} release list\` to see remaining releases`,
+      `Run \`glab-axi release list${repoFlag(c)}\` to see remaining releases`,
     ],
   },
 

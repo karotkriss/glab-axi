@@ -771,7 +771,7 @@ async function mrMerge(args: string[], ctx?: RepoContext): Promise<string> {
       `Merge request !${iid} is closed and cannot be merged`,
       "VALIDATION_ERROR",
       [
-        `Run \`glab-axi${repoFlag({ domain: "mr", action: "merge", repo: ctx })} mr update ${iid} --reopen\` first`,
+        `Run \`glab-axi mr update ${iid} --reopen${repoFlag({ domain: "mr", action: "merge", repo: ctx })}\` first`,
       ],
     );
   }
@@ -999,7 +999,7 @@ async function mrDiff(args: string[], ctx?: RepoContext): Promise<string> {
   }
 
   const help = renderHelp([
-    `Run \`glab-axi${repoFlag({ domain: "mr", action: "diff", repo: target })} mr diff ${iid} --full\` for the complete unified diff`,
+    `Run \`glab-axi mr diff ${iid} --full${repoFlag({ domain: "mr", action: "diff", repo: target })}\` for the complete unified diff`,
     ...nextSteps,
   ]);
   return renderOutput([
