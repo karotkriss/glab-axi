@@ -58,9 +58,9 @@ flags{view}:
 flags{list}:
   --search <q>, --limit <n> (default 30)
 flags{create}:
-  --public | --internal | --private (visibility; default private), --description <text>, --readme (initialize with a README), --template | --clone (GitHub concepts; refused with guidance)
+  --public! | --internal! | --private! (visibility; default private), --description <text>, --readme! (initialize with a README), --template! | --clone! (GitHub concepts; refused with guidance)
 flags{delete}:
-  --yes/-y (required: confirms the deletion)
+  --yes!/-y (required: confirms the deletion)
 notes:
   create takes the new project as a positional [namespace/]name (mirroring \`owner/repo\`): a leading group or user namespace is resolved to namespace_id, else the project lands under your own account. The host comes from -R/GITLAB_HOST, not the positional. --template and --clone (GitHub concepts) are refused with guidance rather than silently ignored.
   delete names its target explicitly as a positional (a numeric project id, or a path) - it never falls back to the resolved project, so it cannot delete the project you happen to be standing in. It destroys the repository, issues, and merge requests, so it requires --yes and never prompts. A repeat delete is a no-op (already_absent). Where the instance enables delayed project deletion, the project is marked for deletion rather than removed immediately.

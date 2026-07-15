@@ -140,11 +140,11 @@ subcommands[8]:
 flags{list}:
   --state <open|closed|all>, --label, --author <user>, --assignee <user>, --milestone <name>, --limit <n> (default 30), --fields <a,b,c>
 flags{view}:
-  --comments (include discussion notes), --full (full body)
+  --comments! (include discussion notes), --full! (full body)
 flags{links}:
   --limit <n> (default 30) - lists related/blocking/blocked-by issues with their relation, iid, title, state
 flags{create}:
-  --title <text> (required), --body <text> or --body-file <path>, --label <a,b>, --assignee <user>, --milestone <name>, --confidential
+  --title <text> (required), --body <text> or --body-file <path>, --label <a,b>, --assignee <user>, --milestone <name>, --confidential!
 flags{edit,update}:
   --title, --body or --body-file, --label, --assignee <user>, --milestone <name>
 flags{close}:

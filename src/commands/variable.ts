@@ -211,7 +211,7 @@ flags{list}:
 flags{get,view,set,delete,rm}:
   --env <scope> (environment scope, default "*")
 flags{set}:
-  --value <value> (required; reads from piped stdin if omitted), --protected
+  --value <value> (required; reads from piped stdin if omitted), --protected!
 examples:
   glab-axi variable list
   glab-axi variable get NODE_ENV

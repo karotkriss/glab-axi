@@ -135,14 +135,21 @@ export function parseLimit(raw: string | undefined, fallback = 30): number {
 const UNIVERSAL_FLAGS = new Set(["--help", "-h", "-R", "--repo"]);
 
 /**
- * Pull every flag token out of a help block's prose.
+ * Pull every flag token out of a help block's prose, along with which of them
+ * are marked boolean (a trailing `!` right after the token, e.g. `--full!`).
  *
  * The lookbehind is what keeps a hyphenated English word out of the set: in
  * "blocked-by" the `-by` is preceded by a word character, so only a token that
  * genuinely starts a flag matches.
  */
-function flagsIn(text: string): string[] {
-  return text.match(/(?<![\w-])--?[A-Za-z][\w-]*/g) ?? [];
+function flagsIn(text: string): { names: string[]; booleans: Set<string> } {
+  const names: string[] = [];
+  const booleans = new Set<string>();
+  for (const m of text.matchAll(/(?<![\w-])(--?[A-Za-z][\w-]*)(!)?/g)) {
+    names.push(m[1]);
+    if (m[2]) booleans.add(m[1]);
+  }
+  return { names, booleans };
 }
 
 /** Read an indented block body that follows a `header:` line. */
@@ -158,8 +165,20 @@ interface HelpFlags {
   /** Flags every subcommand accepts, from a bare `flags:` block (e.g. search). */
   universal: Set<string> | undefined;
   perSub: Map<string, Set<string>>;
+  /** The subset of `universal` that takes no value (help-declared with a `!`). */
+  universalBooleans: Set<string> | undefined;
+  perSubBooleans: Map<string, Set<string>>;
   /** Every subcommand name the help declares, including flag-block aliases. */
   subs: Set<string>;
+}
+
+function mergeInto(
+  map: Map<string, Set<string>>,
+  sub: string,
+  values: Set<string>,
+): void {
+  const existing = map.get(sub);
+  map.set(sub, existing ? new Set([...existing, ...values]) : values);
 }
 
 /**
@@ -173,23 +192,27 @@ interface HelpFlags {
 export function parseHelpFlags(help: string): HelpFlags {
   const lines = help.split("\n");
   const perSub = new Map<string, Set<string>>();
+  const perSubBooleans = new Map<string, Set<string>>();
   const subs = new Set<string>();
   let universal: Set<string> | undefined;
+  let universalBooleans: Set<string> | undefined;
 
   for (let i = 0; i < lines.length; i++) {
     const flagHeader = lines[i].match(/^flags(?:\{(.+)\})?:$/);
     if (flagHeader) {
-      const flags = new Set(flagsIn(blockBody(lines, i + 1)));
+      const { names, booleans } = flagsIn(blockBody(lines, i + 1));
+      const flags = new Set(names);
       if (flagHeader[1] === undefined) {
         universal = flags;
+        universalBooleans = booleans;
         continue;
       }
       // A subcommand may appear in several blocks (`variable set` takes --env
       // from `flags{get,view,set,delete,rm}` and --value from `flags{set}`), so
       // the sets merge; overwriting would reject a flag the command accepts.
       for (const sub of flagHeader[1].split(",").map((s) => s.trim())) {
-        const existing = perSub.get(sub);
-        perSub.set(sub, existing ? new Set([...existing, ...flags]) : flags);
+        mergeInto(perSub, sub, flags);
+        mergeInto(perSubBooleans, sub, booleans);
         subs.add(sub);
       }
       continue;
@@ -202,7 +225,7 @@ export function parseHelpFlags(help: string): HelpFlags {
       }
     }
   }
-  return { universal, perSub, subs };
+  return { universal, perSub, universalBooleans, perSubBooleans, subs };
 }
 
 /**
@@ -219,43 +242,44 @@ export function rejectUnknownFlags(
   args: string[],
 ): void {
   if (sub === undefined) return;
-  const { universal, perSub, subs } = parseHelpFlags(help);
+  const { universal, perSub, universalBooleans, perSubBooleans, subs } =
+    parseHelpFlags(help);
   // An unrecognized subcommand is the router's error to name, not ours.
   if (!subs.has(sub)) return;
   const allowed = universal ?? perSub.get(sub) ?? new Set<string>();
+  const booleans =
+    universalBooleans ?? perSubBooleans.get(sub) ?? new Set<string>();
 
+  // Only a `--`-leading token is a flag candidate here, matching the rest of
+  // the codebase's own convention (getPositional, search's query builder): a
+  // single-dash token is free-text/positional data (a negative number, a
+  // version tag) and is never inspected.
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
-    if (!arg.startsWith("-") || arg === "-") continue;
-    const name = arg.split("=", 1)[0];
-    if (allowed.has(name) || UNIVERSAL_FLAGS.has(name)) {
-      // A known flag's value may itself lead with a dash (--title "-1 regression",
-      // --limit -5). Only a single-dash token is claimed as a value, so a real
-      // `--flag` following a boolean flag is still inspected, never swallowed.
-      // ponytail: an unknown single-dash flag right after a known flag reads as
-      // that flag's value; spell it `--flag=value` if that ambiguity ever bites.
-      const next = args[index + 1];
-      if (
-        !arg.includes("=") &&
-        next?.startsWith("-") &&
-        !next.startsWith("--")
-      ) {
-        index++;
-      }
-      continue;
+    if (!arg.startsWith("--")) continue;
+    const eqIndex = arg.indexOf("=");
+    const name = eqIndex === -1 ? arg : arg.slice(0, eqIndex);
+    if (!allowed.has(name) && !UNIVERSAL_FLAGS.has(name)) {
+      throw new AxiError(
+        `Unknown flag for \`glab-axi ${domain} ${sub}\`: ${name}`,
+        "VALIDATION_ERROR",
+        unknownFlagSuggestions(
+          domain,
+          sub,
+          name,
+          allowed,
+          perSub,
+          args[index - 1],
+        ),
+      );
     }
-    throw new AxiError(
-      `Unknown flag for \`glab-axi ${domain} ${sub}\`: ${name}`,
-      "VALIDATION_ERROR",
-      unknownFlagSuggestions(
-        domain,
-        sub,
-        name,
-        allowed,
-        perSub,
-        args[index - 1],
-      ),
-    );
+    if (eqIndex !== -1 && booleans.has(name)) {
+      throw new AxiError(
+        `\`${name}\` is a boolean flag for \`glab-axi ${domain} ${sub}\` and cannot take a value with \`=\``,
+        "VALIDATION_ERROR",
+        [`Pass it bare: \`${name}\`, not \`${arg}\``],
+      );
+    }
   }
 }
 

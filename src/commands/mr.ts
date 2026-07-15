@@ -318,17 +318,17 @@ export const MR_HELP = `usage: glab-axi mr <subcommand> [flags]
 subcommands[10]:
   list, view <iid|url>, create, update <iid>, merge <iid>, approve <iid>, unapprove <iid>, checks <iid|url>, diff <iid|url>, comment <iid>
 flags{list}:
-  --state <opened|closed|merged|all>, --source-branch/--head <b>, --target-branch/--base <b>, --label, --author <user>, --assignee <user>, --milestone <name>, --draft, --limit <n> (default 30), --fields <a,b,c>, --json/--raw (raw JSON), --jq <expr> (jq filter over raw JSON)
+  --state <opened|closed|merged|all>, --source-branch/--head <b>, --target-branch/--base <b>, --label, --author <user>, --assignee <user>, --milestone <name>, --draft!, --limit <n> (default 30), --fields <a,b,c>, --json!/--raw! (raw JSON), --jq <expr> (jq filter over raw JSON)
 flags{view}:
-  --comments (include discussion notes), --reviews (approvals + thread resolution), --full (head SHA, merge status, pipeline, full body), --json/--raw (raw JSON), --jq <expr> (jq filter over raw JSON); accepts an MR URL in place of the iid
+  --comments! (include discussion notes), --reviews! (approvals + thread resolution), --full! (head SHA, merge status, pipeline, full body), --json!/--raw! (raw JSON), --jq <expr> (jq filter over raw JSON); accepts an MR URL in place of the iid
 flags{diff}:
-  --full (complete unified diff instead of the per-file summary); accepts an MR URL in place of the iid
+  --full! (complete unified diff instead of the per-file summary); accepts an MR URL in place of the iid
 flags{create}:
-  --title <text> (required), --source-branch <b> (required), --target-branch <b> (default: project default), --body <text> or --body-file <path>, --assignee <user>, --reviewer <user>, --label <a,b>, --milestone <name>, --draft, --remove-source-branch, --squash
+  --title <text> (required), --source-branch <b> (required), --target-branch <b> (default: project default), --body <text> or --body-file <path>, --assignee <user>, --reviewer <user>, --label <a,b>, --milestone <name>, --draft!, --remove-source-branch!, --squash!
 flags{update,edit}:
-  --title, --body or --body-file, --label, --milestone <name>, --assignee <user>, --target-branch, --ready (clear Draft), --draft (mark Draft), --close, --reopen
+  --title, --body or --body-file, --label, --milestone <name>, --assignee <user>, --target-branch, --ready! (clear Draft), --draft! (mark Draft), --close!, --reopen!
 flags{merge}:
-  --method <merge|squash|rebase>, --merge, --squash, --rebase, --auto (merge when the pipeline succeeds), --remove-source-branch/--delete-branch, --body or --body-file (merge commit message)
+  --method <merge|squash|rebase>, --merge!, --squash!, --rebase!, --auto! (merge when the pipeline succeeds), --remove-source-branch!/--delete-branch!, --body or --body-file (merge commit message)
 flags{approve,unapprove}:
   (none) - GitLab models review as an approval plus discussion threads, so there is no \`mr review\`: approve/unapprove for the verdict, comment for feedback
 flags{checks}:
