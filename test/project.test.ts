@@ -529,6 +529,77 @@ describe("project delete", () => {
     expect(out).not.toContain("scheduled");
   });
 
+  // A failed read-back (500, auth, timeout, ...) must not be reported the same
+  // as a confirmed purge - that would reintroduce the exact "confident lie"
+  // this command's read-back exists to prevent.
+  it("reports unknown, not ok, when the read-back fails for a non-404 reason", async () => {
+    glApiResultMock.mockResolvedValueOnce({
+      stdout: JSON.stringify(project({ id: 571 })),
+      stderr: "",
+      exitCode: 0,
+    }); // GET-first
+    glApiResultMock.mockResolvedValueOnce({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+    }); // DELETE
+    glApiResultMock.mockResolvedValueOnce({
+      stdout: "",
+      stderr: "HTTP 500 Internal Server Error",
+      exitCode: 22,
+    }); // read-back fails for a reason other than "not found"
+
+    const out = await projectCommand(["delete", "my-group/svc", "--yes"], ctx);
+
+    expect(out).toContain("status: unknown");
+    expect(out).not.toContain("status: ok");
+    expect(out).not.toContain("scheduled");
+    expect(out).toContain("HTTP 500 Internal Server Error");
+  });
+
+  it("scrubs the wrapped CLI's name out of an unverifiable read-back reason", async () => {
+    glApiResultMock.mockResolvedValueOnce({
+      stdout: JSON.stringify(project({ id: 571 })),
+      stderr: "",
+      exitCode: 0,
+    });
+    glApiResultMock.mockResolvedValueOnce({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+    }); // DELETE
+    glApiResultMock.mockResolvedValueOnce({
+      stdout: "",
+      stderr: "glab: something failed",
+      exitCode: 1,
+    });
+
+    const out = await projectCommand(["delete", "my-group/svc", "--yes"], ctx);
+
+    expect(out).toContain("status: unknown");
+    expect(out).not.toMatch(/\bglab\b(?!-axi)/i);
+  });
+
+  it("reports unknown when no numeric id was captured before deletion", async () => {
+    glApiResultMock.mockResolvedValueOnce({
+      stdout: "not json",
+      stderr: "",
+      exitCode: 0,
+    }); // GET-first returns an unparseable body
+    glApiResultMock.mockResolvedValueOnce({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+    }); // DELETE
+
+    const out = await projectCommand(["delete", "my-group/svc", "--yes"], ctx);
+
+    expect(out).toContain("status: unknown");
+    expect(out).not.toContain("status: ok");
+    // No numeric id was captured, so no read-back call could even be made.
+    expect(glApiResultMock.mock.calls.length).toBe(2);
+  });
+
   it("is a no-op on an already-marked project (no second DELETE)", async () => {
     glApiResultMock.mockResolvedValueOnce({
       stdout: JSON.stringify(

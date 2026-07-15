@@ -9,6 +9,7 @@ vi.mock("../src/gl.js", () => ({ glConfigGet: vi.fn() }));
 
 import { execFileSync } from "node:child_process";
 import { glConfigGet } from "../src/gl.js";
+import { glNotInstalledError } from "../src/errors.js";
 import { parseRepoArg, resolveRepo, parseRemoteUrl } from "../src/context.js";
 import { knownHosts } from "../src/hosts.js";
 
@@ -188,6 +189,17 @@ describe("resolveRepo from a git remote", () => {
     });
 
     expect(resolveRepo()).toBeUndefined();
+  });
+
+  // A missing glab binary must reach the caller as an actionable error, not be
+  // swallowed by this function's catch-all into a misleading "no project".
+  it("propagates a not-installed error instead of resolving to no project", () => {
+    execMock.mockReturnValue("git@gitlab.example.com:group/project.git\n");
+    configMock.mockImplementation(() => {
+      throw glNotInstalledError();
+    });
+
+    expect(() => resolveRepo()).toThrow("GitLab CLI is not installed");
   });
 
   it("does not probe the host config for an explicit -R target", () => {

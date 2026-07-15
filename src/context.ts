@@ -94,21 +94,26 @@ function isKnownGitLabHost(host: string): boolean {
 }
 
 function parseGitRemote(): RepoContext | undefined {
+  let url: string;
   try {
-    const url = execFileSync("git", ["remote", "get-url", "origin"], {
+    url = execFileSync("git", ["remote", "get-url", "origin"], {
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "ignore"],
     }).trim();
-    const ctx = parseRemoteUrl(url);
-    // A parseable remote is not a GitLab project. Without this check any
-    // forge's remote (github.com, bitbucket.org) resolves to a confident
-    // RepoContext, and every command downstream reports on a project that was
-    // never there. An unknown host means "no project resolved", not a guess.
-    if (!ctx?.host || !isKnownGitLabHost(ctx.host)) return undefined;
-    return ctx;
   } catch {
+    // No remote (or no git repo) is not an error - it just means no project.
     return undefined;
   }
+  const ctx = parseRemoteUrl(url);
+  // A parseable remote is not a GitLab project. Without this check any
+  // forge's remote (github.com, bitbucket.org) resolves to a confident
+  // RepoContext, and every command downstream reports on a project that was
+  // never there. An unknown host means "no project resolved", not a guess.
+  // isKnownGitLabHost is deliberately outside the try/catch above: it can
+  // throw glNotInstalledError, which must reach the caller rather than being
+  // swallowed as "no remote".
+  if (!ctx?.host || !isKnownGitLabHost(ctx.host)) return undefined;
+  return ctx;
 }
 
 /** Parse host + namespace path out of a git remote URL (SSH or HTTPS). */
