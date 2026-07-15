@@ -284,6 +284,29 @@ describe("mr merge", () => {
     expect(out).toContain("merged");
   });
 
+  it("diagnoses a post-rebase merge failure from the settled state, not the pre-rebase snapshot", async () => {
+    // Pre-rebase GET still needs a rebase; the poll settles onto a DIFFERENT
+    // blocker (missing approvals) after the rebase actually completes.
+    glApiMock.mockResolvedValueOnce(
+      mr({ detailed_merge_status: "need_rebase" }),
+    ); // state check
+    glApiMock.mockResolvedValueOnce({}); // rebase PUT
+    glApiMock.mockResolvedValueOnce(
+      mr({ rebase_in_progress: false, detailed_merge_status: "not_approved" }),
+    ); // poll (settled, post-rebase)
+    glApiMock.mockRejectedValueOnce(
+      new AxiError("Branch cannot be merged", "VALIDATION_ERROR"),
+    ); // merge PUT still refused
+    const err = await mrCommand(["merge", "42", "--rebase"], ctx).catch(
+      (e) => e as AxiError,
+    );
+    expect(err).toBeInstanceOf(AxiError);
+    expect((err as AxiError).message).toContain(
+      "has not met its required approvals",
+    );
+    expect((err as AxiError).message).not.toContain("needs a rebase");
+  });
+
   it("rejects more than one merge method", async () => {
     await expect(
       mrCommand(["merge", "42", "--squash", "--rebase"], ctx),

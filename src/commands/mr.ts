@@ -677,7 +677,7 @@ const TRANSIENT_MERGE_STATUS = new Set(["checking", "preparing", "unchecked"]);
  * merge status settles out of its transient states, otherwise the immediate
  * follow-up merge 422s.
  */
-async function waitForRebase(iid: number, ctx?: RepoContext): Promise<void> {
+async function waitForRebase(iid: number, ctx?: RepoContext): Promise<Json> {
   for (let attempt = 0; attempt < REBASE_POLL_MAX_ATTEMPTS; attempt++) {
     await sleep(REBASE_POLL_INTERVAL_MS);
     const mr = await glApi<Json>(
@@ -695,7 +695,7 @@ async function waitForRebase(iid: number, ctx?: RepoContext): Promise<void> {
       mr.detailed_merge_status ?? "",
     );
     if (rebaseDone && statusSettled) {
-      return;
+      return mr;
     }
   }
   throw new AxiError(
@@ -872,9 +872,10 @@ async function mrMerge(args: string[], ctx?: RepoContext): Promise<string> {
   }
 
   // rebase is asynchronous: kick it off, poll to completion, THEN merge.
+  let mergeSnapshot = mr;
   if (method === "rebase") {
     await glApi<Json>(mrPath(ctx, iid, "/rebase"), { method: "PUT", ctx });
-    await waitForRebase(iid, ctx);
+    mergeSnapshot = await waitForRebase(iid, ctx);
   }
 
   const fields: string[] = [];
@@ -895,7 +896,7 @@ async function mrMerge(args: string[], ctx?: RepoContext): Promise<string> {
       ctx,
     });
   } catch (err) {
-    throw explainMergeFailure(err, mr, iid, ctx);
+    throw explainMergeFailure(err, mergeSnapshot, iid, ctx);
   }
   const help = renderHelp(
     getSuggestions({ domain: "mr", action: "merge", id: iid, repo: ctx }),
