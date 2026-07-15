@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-15
+
 ### Added
 
 - Deliberate refusals now cover verbs, not just flags: an unbuilt or GitLab-incompatible subcommand explains why and redirects to the real command, instead of a generic "Unknown `<domain>` subcommand".
@@ -104,6 +106,7 @@ First published release.
 - Installable Agent Skill generated from the CLI's own help, with a CI freshness check.
 - Generic host/project targeting via `-R [host/]group/project`, the `origin` git remote, or `GITLAB_HOST` (host-only override).
 
-[Unreleased]: https://github.com/karotkriss/glab-axi/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/karotkriss/glab-axi/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/karotkriss/glab-axi/releases/tag/v0.3.0
 [0.2.0]: https://github.com/karotkriss/glab-axi/releases/tag/v0.2.0
 [0.1.0]: https://github.com/karotkriss/glab-axi/releases/tag/v0.1.0
