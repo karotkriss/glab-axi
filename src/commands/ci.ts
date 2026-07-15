@@ -448,15 +448,20 @@ const SPILL_DIR = join(tmpdir(), "glab-axi-logs");
 
 /**
  * Create (or reuse) the stable spill directory, refusing to write through a
- * pre-planted symlink in the shared tmp root. `lstatSync` deliberately does not
- * follow symlinks, so a symlink at SPILL_DIR - real dir or not - fails the
- * `isDirectory()` check and the caller falls back to a fresh mkdtemp dir instead
- * of writing a trace (which can carry leaked CI secrets) through it.
+ * pre-planted symlink or a pre-existing directory owned by another user or
+ * group/other-writable - `mkdirSync`'s `mode` does not chmod a directory that
+ * already exists, so a real but unsafe directory at SPILL_DIR would otherwise
+ * pass silently. `lstatSync` deliberately does not follow symlinks. Any of
+ * these checks failing throws, and the caller falls back to a fresh mkdtemp
+ * dir instead of writing a trace (which can carry leaked CI secrets) through
+ * an unsafe path.
  */
 function ensureSpillDir(): string {
   mkdirSync(SPILL_DIR, { recursive: true, mode: 0o700 });
-  if (!lstatSync(SPILL_DIR).isDirectory()) {
-    throw new Error("spill directory is not a real directory");
+  const st = lstatSync(SPILL_DIR);
+  const ownedByUs = process.getuid === undefined || st.uid === process.getuid();
+  if (!st.isDirectory() || !ownedByUs || (st.mode & 0o077) !== 0) {
+    throw new Error("spill directory is not safe to write into");
   }
   return SPILL_DIR;
 }
