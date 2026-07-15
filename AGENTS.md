@@ -70,6 +70,10 @@ Driving verification against a real instance is fine; naming it in anything publ
 A real host, namespace, or project path must never land in tests or fixtures, examples, help text, commit messages, or PR bodies - use the placeholders this repo already establishes: `gitlab.example.com`, `dev.example.gy` (see `test/context.test.ts`), `group/project`, `your-namespace`.
 This is cheap to honour up front and effectively irreversible once missed: a merged commit keeps the string forever, and editing a PR body leaves the prior revision visible in GitHub's edit history.
 
+Removing such a string is the one case where the cleanup itself re-publishes it, so check the result rather than assuming.
+A diff that deletes a hostname still contains it on every `-` line, and the gate writes the PR body from that diff: a remediation PR will happily narrate the exact string it removed. Grep the PR body after the run, not just the tree.
+Because a real value is by then indistinguishable from a placeholder in the write-up, keep the two apart from the start - that is what makes this rule cheaper to follow than to unwind.
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.
