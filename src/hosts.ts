@@ -29,7 +29,17 @@ function configPath(): string {
 
 function readConfiguredHosts(): Record<string, unknown> {
   try {
-    const parsed = parse(readFileSync(configPath(), "utf-8"));
+    // This file holds the API token, and a yaml WARNING quotes the source line it is
+    // unhappy about - so an odd construct on the token line prints the token to stderr.
+    // A warning is not a throw, so the catch below cannot stop it. logLevel "error"
+    // silences the warning channel outright, whatever the trigger.
+    // Not "silent": that also silences parse ERRORS, so malformed yaml would stop
+    // throwing and return a half-parsed object, inventing hosts instead of reporting
+    // none. Errors must keep throwing to reach the catch (their message may quote the
+    // token line too, which is why it is discarded, never logged).
+    const parsed = parse(readFileSync(configPath(), "utf-8"), {
+      logLevel: "error",
+    });
     const hosts = parsed?.hosts;
     // Missing, unreadable, or malformed config: no authoritative answer.
     return hosts && typeof hosts === "object" ? hosts : {};
