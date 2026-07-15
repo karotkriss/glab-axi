@@ -14,22 +14,60 @@ Agents drive CLIs by reading stdout. Raw `glab`/REST output is verbose JSON full
 - **Definitive empty states** and **contextual `help[]` suggestions** on every list and mutation.
 - **Structured errors on stdout** - actionable, and they never leak the underlying tool's name.
 
-## Requirements
+## Quick Start
 
-- Node.js >= 20
-- The GitLab [`glab`](https://gitlab.com/gitlab-org/cli) CLI, installed and authenticated (`glab auth login`). `glab-axi` shells out to it.
+Install the glab-axi skill in the [Agent Skills](https://agentskills.io) format with [`npx skills`](https://github.com/vercel-labs/skills):
 
-## Install
+```sh
+npx skills add karotkriss/glab-axi --skill glab-axi -g
+```
+
+That is the entire setup - there is no npm install.
+The skill teaches your agent to invoke the CLI through `npx -y glab-axi`, so glab-axi comes along on demand.
+You still need the GitLab [`glab`](https://gitlab.com/gitlab-org/cli) CLI installed and authenticated (`glab auth login`), and Node.js 20 or newer.
+For a self-hosted instance, authenticate `glab` against that host and target it with `-R <host>/group/project` or `GITLAB_HOST` (see [Targeting a project](#targeting-a-project)).
+
+`-g` installs the skill for every project (`~/.claude/skills/`, and the equivalent directory for other agents); drop it to install into the current project only (`.claude/skills/`).
+`--skill glab-axi` picks just the CLI skill: this repo also ships `glab-axi-release`, which is for maintainers cutting a release, not for using the tool.
+
+The skill is not a user-facing slash command (`user-invocable: false`).
+Just ask for anything that touches GitLab - filing an issue, reviewing a merge request, chasing a failed pipeline, cutting a release - and the agent loads the skill on its own when it recognizes the task.
+It loads on demand rather than sitting in the context window, so it costs no per-session tokens, and it works in any agent that supports the skill format.
+
+## Other ways to install
+
+The skill is the recommended path, but it is not the only one.
+
+### Zero setup
+
+`glab-axi` is an AXI, so any capable agent can run the CLI directly with nothing installed at all.
+Just tell your agent:
+
+```
+Execute `npx -y glab-axi` to get GitLab tools.
+```
+
+### Global npm install
+
+A global install gives you the `glab-axi` command directly, which is handy for running it yourself:
 
 ```sh
 npm install -g glab-axi
+glab-axi issue list
 ```
 
-Or run it without installing:
+### Session hook
+
+Want ambient GitLab context - the current project's open issues and merge requests - in every agent session, instead of loading on demand?
+With the CLI installed globally, opt into the hook:
 
 ```sh
-npx -y glab-axi issue list
+glab-axi setup hooks
 ```
+
+That installs an idempotent `SessionStart` hook for Claude Code, Codex, and OpenCode.
+Each session then opens with a compact dashboard of the current project, so the agent can act immediately with no invocation needed.
+Restart your agent session afterwards so the new hook takes effect; re-running the command repairs the hook's path after a reinstall.
 
 ## Usage
 
@@ -152,26 +190,6 @@ glab-axi mr view 42 --jq .detailed_merge_status
 glab-axi mr list --state opened --jq '.[].iid'
 ```
 
-## Ambient context for agents (two ways - pick one or both)
-
-These are complementary; you only need one.
-
-### 1. Session hook (recommended)
-
-```sh
-glab-axi setup hooks
-```
-
-Installs an idempotent `SessionStart` hook for Claude Code, Codex, and OpenCode. At the start of each session your agent sees a compact dashboard of the current project's open issues and merge requests, so it can act immediately - no invocation needed. Re-running repairs the hook's path after a reinstall.
-
-### 2. Installable skill
-
-```sh
-npx skills add karotkriss/glab-axi --skill glab-axi
-```
-
-A static [Agent Skill](https://agentskills.io) that loads on demand when the agent recognizes a GitLab task. No per-session token cost; works in any agent that supports the skill format. The skill is generated from the CLI's own help (`npm run skill:build`), and CI fails if it drifts.
-
 ## Development
 
 ```sh
@@ -183,6 +201,8 @@ npm run lint
 npm run format:check
 npm run skill:check            # fail if SKILL.md is stale
 ```
+
+The skill installed by the [Quick Start](#quick-start) is generated from the CLI's own help (`npm run skill:build`), and CI fails if it has drifted - commit the regenerated file.
 
 Architecture notes live in [`AGENTS.md`](./AGENTS.md). The short version: every shell-out goes through `src/gl.ts`, which targets GitLab via `glab api` (REST passthrough) - the host through `GITLAB_HOST`, the project through its URL-encoded path. `src/commands/mr.ts` is the reference template for the per-domain command files.
 
