@@ -1,5 +1,6 @@
-import { readFileSync, readdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { readFileSync, readdirSync, mkdirSync, chmodSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Mock the gl executor so no real glab/network is touched.
@@ -544,6 +545,24 @@ describe("ci log token efficiency (AXI clause 1)", () => {
     glRawMock.mockResolvedValueOnce(`${ESC}[0K` + "x".repeat(25000));
     const out = await ciCommand(["log", "48021"], ctx);
     expect(out).toContain("original_length: 25000");
+  });
+
+  it("falls back to a fresh temp dir when the stable spill dir is group/other-writable", async () => {
+    const stableDir = join(tmpdir(), "glab-axi-logs");
+    mkdirSync(stableDir, { recursive: true });
+    chmodSync(stableDir, 0o777);
+    try {
+      const trace = `${ESC}[0K` + "x".repeat(30000) + "\nboom\n";
+      glRawMock.mockResolvedValueOnce(trace);
+      const out = await ciCommand(["log", "48200"], ctx);
+      const match = out.match(/full_log: (\S+)/);
+      expect(match).not.toBeNull();
+      // Refuses to write through the unsafe pre-existing dir; falls back to a
+      // fresh mkdtemp dir instead, same as the pre-planted-symlink case.
+      expect(dirname(match![1])).not.toBe(stableDir);
+    } finally {
+      chmodSync(stableDir, 0o700);
+    }
   });
 
   it("leaves a short log untruncated with no spill file", async () => {
