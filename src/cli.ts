@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runAxiCli } from "axi-sdk-js";
+import { AxiError, exitCodeForError } from "./errors.js";
+import { renderError } from "./toon.js";
 import { resolveRepo, type RepoContext } from "./context.js";
 import { homeCommand } from "./commands/home.js";
 import { issueCommand, ISSUE_HELP } from "./commands/issue.js";
@@ -86,18 +88,34 @@ export async function main(
     stdout?: { write: (chunk: string) => unknown };
   } = {},
 ): Promise<void> {
-  await runAxiCli<RepoContext | undefined>({
-    ...(options.argv ? { argv: options.argv } : {}),
-    description: DESCRIPTION,
-    version: VERSION,
-    topLevelHelp: TOP_HELP,
-    ...(options.stdout ? { stdout: options.stdout } : {}),
-    home: withRepoContext(undefined, homeCommand),
-    commands: COMMANDS,
-    getCommandHelp: (command) => COMMAND_HELP[command],
-    resolveContext: ({ args }) =>
-      resolveRepo(parseRepoContextArgs(args).repoFlag),
-  });
+  const stdout = options.stdout ?? process.stdout;
+  try {
+    await runAxiCli<RepoContext | undefined>({
+      ...(options.argv ? { argv: options.argv } : {}),
+      description: DESCRIPTION,
+      version: VERSION,
+      topLevelHelp: TOP_HELP,
+      ...(options.stdout ? { stdout: options.stdout } : {}),
+      home: withRepoContext(undefined, homeCommand),
+      commands: COMMANDS,
+      getCommandHelp: (command) => COMMAND_HELP[command],
+      resolveContext: ({ args }) =>
+        resolveRepo(parseRepoContextArgs(args).repoFlag),
+    });
+  } catch (error) {
+    // runAxiCli only wraps the command handler in try/catch, not
+    // resolveContext - an error thrown while resolving the target project
+    // (e.g. glab missing from PATH) would otherwise crash as an unhandled
+    // rejection instead of rendering as a structured error.
+    if (error instanceof AxiError) {
+      stdout.write(
+        `${renderError(error.message, error.code, error.suggestions)}\n`,
+      );
+    } else {
+      stdout.write(`${renderError(String(error), "UNKNOWN")}\n`);
+    }
+    process.exitCode = exitCodeForError(error);
+  }
 }
 
 function readPackageVersion(): string {

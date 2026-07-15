@@ -178,7 +178,10 @@ export function glConfigGet(key: string, host: string): string {
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "ignore"],
     }).trim();
-  } catch {
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
+      throw glNotInstalledError();
+    }
     return "";
   }
 }

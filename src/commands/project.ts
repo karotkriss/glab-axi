@@ -413,11 +413,20 @@ async function projectDelete(
   // where delayed deletion is enabled the project still exists, renamed to
   // <path>-deletion_scheduled-<id>. That rename is why the read-back goes by
   // numeric id - the path we deleted by now 404s even though the project lives.
-  const markedOn =
+  const verification: DeleteVerification =
     before?.id === undefined
-      ? undefined
+      ? {
+          status: "unverifiable",
+          reason: "No numeric project id was captured before deletion",
+        }
       : await readMarkedForDeletion(`projects/${before.id}`, target.ctx);
-  if (markedOn) return renderScheduled(target.label, markedOn, false, hints);
+
+  if (verification.status === "scheduled") {
+    return renderScheduled(target.label, verification.purgeAfter, false, hints);
+  }
+  if (verification.status === "unverifiable") {
+    return renderUnverifiable(target.label, verification.reason, hints);
+  }
 
   return renderOutput([
     renderDetail("deleted", { project: target.label, status: "ok" }, [
@@ -437,14 +446,66 @@ function parseProject(body: string): Json | undefined {
   }
 }
 
-/** The project's `marked_for_deletion_on`, or undefined if it is gone. */
+/**
+ * The outcome of reading a project back after DELETE: purged (a genuine 404 -
+ * the project is really gone), scheduled (still exists, marked for deferred
+ * deletion), or unverifiable (the read-back itself failed for a reason other
+ * than "not found", so the true state is unknown).
+ */
+type DeleteVerification =
+  | { status: "purged" }
+  | { status: "scheduled"; purgeAfter: string }
+  | { status: "unverifiable"; reason: string };
+
+/** Read back a project post-DELETE to distinguish purged/scheduled/unverifiable. */
 async function readMarkedForDeletion(
   path: string,
   ctx?: RepoContext,
-): Promise<string | undefined> {
+): Promise<DeleteVerification> {
   const result = await glApiResult(path, { ctx });
-  if (result.exitCode !== 0) return undefined;
-  return parseProject(result.stdout)?.marked_for_deletion_on ?? undefined;
+  if (result.exitCode !== 0) {
+    const text = `${result.stderr} ${result.stdout}`;
+    if (/404|not found/i.test(text)) return { status: "purged" };
+    return {
+      status: "unverifiable",
+      reason:
+        scrubTool(result.stderr || result.stdout) ||
+        "Verification request failed",
+    };
+  }
+  const proj = parseProject(result.stdout);
+  if (proj === undefined) {
+    return {
+      status: "unverifiable",
+      reason: "Verification response could not be parsed",
+    };
+  }
+  if (proj.marked_for_deletion_on) {
+    return { status: "scheduled", purgeAfter: proj.marked_for_deletion_on };
+  }
+  return {
+    status: "unverifiable",
+    reason: "Project still exists but was not marked for deletion",
+  };
+}
+
+/** Render a deletion whose outcome could not be confirmed against the server. */
+function renderUnverifiable(
+  label: string,
+  reason: string,
+  hints: string[],
+): string {
+  return renderOutput([
+    renderDetail("deleted", { project: label, status: "unknown", reason }, [
+      field("project"),
+      field("status"),
+      field("reason"),
+    ]),
+    renderHelp([
+      "The delete request was accepted, but its outcome could not be verified - re-run the same delete command (idempotent) or run `glab-axi project view -R <project>` to check the current state",
+      ...hints,
+    ]),
+  ]);
 }
 
 /** Render a deletion the instance deferred rather than performed. */
