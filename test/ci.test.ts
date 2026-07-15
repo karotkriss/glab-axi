@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
+import { dirname } from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Mock the gl executor so no real glab/network is touched.
@@ -516,6 +517,27 @@ describe("ci log token efficiency (AXI clause 1)", () => {
     expect(spilled.length).toBe(30000 + "\nboom\n".length);
 
     expect(out).toContain("grep it for earlier context");
+  });
+
+  it("reuses one stable spill file across repeat calls for the same job", async () => {
+    const trace = `${ESC}[0K` + "x".repeat(30000) + "\nfirst\n";
+    glRawMock.mockResolvedValueOnce(trace);
+    const out1 = await ciCommand(["log", "48099"], ctx);
+    const path1 = out1.match(/full_log: (\S+)/)?.[1];
+    expect(path1).toBeDefined();
+
+    const dir = dirname(path1!);
+    const before = readdirSync(dir);
+
+    const trace2 = `${ESC}[0K` + "x".repeat(30000) + "\nsecond\n";
+    glRawMock.mockResolvedValueOnce(trace2);
+    const out2 = await ciCommand(["log", "48099"], ctx);
+    const path2 = out2.match(/full_log: (\S+)/)?.[1];
+
+    // Same job, same path, same directory - no new mkdtemp dir was minted.
+    expect(path2).toBe(path1);
+    expect(readdirSync(dir)).toEqual(before);
+    expect(readFileSync(path2!, "utf-8")).toContain("second");
   });
 
   it("measures the log it actually shows, not the raw ANSI byte count", async () => {
