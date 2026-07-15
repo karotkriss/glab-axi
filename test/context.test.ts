@@ -1,15 +1,30 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Mock the known-host lookup so these never read the machine's real glab config.
 vi.mock("../src/hosts.js", () => ({ knownHosts: vi.fn() }));
+// Mock both sides of remote resolution: the git remote lookup and the CLI's
+// per-host config probe. No real git repo or glab config is touched.
+vi.mock("node:child_process", () => ({ execFileSync: vi.fn() }));
+vi.mock("../src/gl.js", () => ({ glConfigGet: vi.fn() }));
 
-import { parseRepoArg } from "../src/context.js";
+import { execFileSync } from "node:child_process";
+import { glConfigGet } from "../src/gl.js";
+import { parseRepoArg, resolveRepo, parseRemoteUrl } from "../src/context.js";
 import { knownHosts } from "../src/hosts.js";
 
 const knownHostsMock = knownHosts as unknown as ReturnType<typeof vi.fn>;
+const execMock = execFileSync as unknown as ReturnType<typeof vi.fn>;
+const configMock = glConfigGet as unknown as ReturnType<typeof vi.fn>;
 
 function configured(...hosts: string[]) {
   knownHostsMock.mockReturnValue(new Set(hosts));
+}
+
+/** Hosts the CLI is configured for; anything else reads back "". */
+function configuredHosts(...hosts: string[]) {
+  configMock.mockImplementation((_key: string, host: string) =>
+    hosts.includes(host) ? host : "",
+  );
 }
 
 describe("parseRepoArg", () => {
@@ -104,6 +119,95 @@ describe("parseRepoArg", () => {
       host: undefined,
       project: "christopher.mckay/my-project",
       source: "flag",
+    });
+  });
+});
+
+describe("resolveRepo from a git remote", () => {
+  beforeEach(() => {
+    execMock.mockReset();
+    configMock.mockReset();
+    delete process.env["GITLAB_HOST"];
+  });
+
+  afterEach(() => {
+    delete process.env["GITLAB_HOST"];
+  });
+
+  it("resolves a remote on a configured GitLab host", () => {
+    execMock.mockReturnValue("git@gitlab.example.com:group/project.git\n");
+    configuredHosts("gitlab.example.com");
+
+    expect(resolveRepo()).toEqual({
+      host: "gitlab.example.com",
+      project: "group/project",
+      source: "git",
+    });
+  });
+
+  // The bug this guards: any forge's remote parsed cleanly and was reported as
+  // a GitLab project that never existed.
+  it.each([
+    ["github.com", "git@github.com:karotkriss/glab-axi.git"],
+    ["bitbucket.org", "git@bitbucket.org:someteam/someproj.git"],
+    ["https github", "https://github.com/karotkriss/glab-axi.git"],
+  ])("does not resolve a %s remote as a GitLab project", (_label, url) => {
+    execMock.mockReturnValue(`${url}\n`);
+    configuredHosts("gitlab.example.com", "dev.example.gy");
+
+    expect(resolveRepo()).toBeUndefined();
+  });
+
+  // GITLAB_HOST only overrides an already-resolved project's host. It must not
+  // launder a foreign remote into a GitLab project: this is the audit's
+  // decisive case, where a GitHub checkout aimed at a real GitLab host printed
+  // a confident "0 open" for a project that was never there.
+  it("does not let GITLAB_HOST validate a foreign remote", () => {
+    execMock.mockReturnValue("git@github.com:karotkriss/glab-axi.git\n");
+    configuredHosts("dev.example.gy");
+    process.env["GITLAB_HOST"] = "dev.example.gy";
+
+    expect(resolveRepo()).toBeUndefined();
+  });
+
+  // Covers a token-from-environment setup (e.g. CI) that has no config file.
+  it("accepts a remote whose host GITLAB_HOST names explicitly", () => {
+    execMock.mockReturnValue("git@gitlab.internal:group/project.git\n");
+    configuredHosts(); // nothing configured on disk
+    process.env["GITLAB_HOST"] = "gitlab.internal";
+
+    expect(resolveRepo()).toMatchObject({
+      host: "gitlab.internal",
+      project: "group/project",
+    });
+  });
+
+  it("resolves nothing when there is no remote", () => {
+    execMock.mockImplementation(() => {
+      throw new Error("no origin");
+    });
+
+    expect(resolveRepo()).toBeUndefined();
+  });
+
+  it("does not probe the host config for an explicit -R target", () => {
+    expect(resolveRepo("dev.example.gy/group/project")).toMatchObject({
+      host: "dev.example.gy",
+      project: "group/project",
+      source: "flag",
+    });
+    expect(configMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("parseRemoteUrl", () => {
+  // Stays a pure parser: host validation belongs at the resolution boundary,
+  // so this keeps answering "what does this URL say" for any host.
+  it("parses a URL without judging its host", () => {
+    expect(parseRemoteUrl("git@bitbucket.org:someteam/someproj.git")).toEqual({
+      host: "bitbucket.org",
+      project: "someteam/someproj",
+      source: "git",
     });
   });
 });

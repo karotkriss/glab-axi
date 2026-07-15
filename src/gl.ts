@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import {
   argumentTooLargeError,
   AxiError,
@@ -163,6 +163,24 @@ export async function glApiResult(
   if (result.stderr === "ENOENT") throw glNotInstalledError();
   if (result.stderr === "E2BIG") throw argumentTooLargeError();
   return result;
+}
+
+/**
+ * Read a per-host CLI config value, or "" when the host has no entry.
+ *
+ * Offline and synchronous (no API call), so it is cheap enough for the
+ * resolution path. Only value-safe keys belong here: never read `token`, which
+ * is per-host too but would put a secret one interpolation away from output.
+ */
+export function glConfigGet(key: string, host: string): string {
+  try {
+    return execFileSync("glab", ["config", "get", "-h", host, key], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return "";
+  }
 }
 
 /**
