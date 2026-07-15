@@ -25,8 +25,9 @@ Install the glab-axi skill in the [Agent Skills](https://agentskills.io) format 
 npx skills add karotkriss/glab-axi --skill glab-axi -g
 ```
 
-That is the entire setup - there is no npm install.
+That is the entire setup - on a clean machine there is no npm install.
 The skill teaches your agent to invoke the CLI through `npx -y glab-axi`, so glab-axi comes along on demand.
+If you have ever run `npm install -g glab-axi`, that copy takes over the skill's `npx -y glab-axi` and stops tracking new releases - see [Global npm install](#global-npm-install) for the one-line check.
 You still need the GitLab [`glab`](https://gitlab.com/gitlab-org/cli) CLI installed and authenticated (`glab auth login`), and Node.js 20 or newer.
 For a self-hosted instance, authenticate `glab` against that host and target it with `-R <host>/group/project` or `GITLAB_HOST` (see [Targeting a project](#targeting-a-project)).
 
@@ -57,6 +58,29 @@ A global install gives you the `glab-axi` command directly, which is handy for r
 ```sh
 npm install -g glab-axi
 glab-axi issue list
+```
+
+A global install also takes over the skill's `npx -y glab-axi`: when a matching command is already in your global bin, `npx` runs it and never asks the registry what the current version is.
+So the global copy is what your agent runs, and it stays on whatever version you installed until you upgrade it yourself.
+Nothing announces this - the CLI keeps working and quietly answers with old behaviour.
+
+Compare what `npx` runs against what is published:
+
+```sh
+npx -y glab-axi --version   # what your agent actually runs
+npm view glab-axi version   # what is published
+```
+
+If those differ, upgrade the global copy in place:
+
+```sh
+npm install -g glab-axi@latest
+```
+
+Or, if you only use the skill and no [session hook](#session-hook) needs the bare `glab-axi` command, drop the global copy and let `npx` fetch the published version:
+
+```sh
+npm uninstall -g glab-axi
 ```
 
 ### Session hook
