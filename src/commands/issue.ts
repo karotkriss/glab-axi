@@ -4,6 +4,7 @@ import type { RepoContext } from "../context.js";
 import { takeBody, truncateBody } from "../body.js";
 import { formatCountLine } from "../format.js";
 import { getSuggestions } from "../suggestions.js";
+import { refuseSubcommand } from "../refusals.js";
 import { takeFlag, takeBoolFlag, takeNumber, parseLimit } from "../args.js";
 import { parseFields, type FieldSpec } from "../fields.js";
 import { resolveUserId, resolveMilestoneId } from "../resolve.js";
@@ -18,7 +19,6 @@ import {
   renderList,
   renderDetail,
   renderHelp,
-  renderError,
   renderOutput,
   type FieldDef,
 } from "../toon.js";
@@ -495,10 +495,6 @@ export async function issueCommand(
     case undefined:
       return ISSUE_HELP;
     default:
-      return renderError(
-        `Unknown issue subcommand: ${sub}`,
-        "VALIDATION_ERROR",
-        ["Run `glab-axi issue --help` to see available subcommands"],
-      );
+      return refuseSubcommand("issue", sub);
   }
 }

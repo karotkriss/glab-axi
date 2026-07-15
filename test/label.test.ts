@@ -45,6 +45,64 @@ function label(overrides: Record<string, unknown> = {}) {
   };
 }
 
+describe("label edit", () => {
+  it("PUTs the changed fields and renders the response, not the request", async () => {
+    glApiMock.mockResolvedValueOnce(
+      label({ name: "bug", color: "#ed9121", description: "Broken behaviour" }),
+    );
+    const out = await labelCommand(
+      [
+        "edit",
+        "bug",
+        "--color",
+        "#ed9121",
+        "--description",
+        "Broken behaviour",
+      ],
+      ctx,
+    );
+    const [path, opts] = glApiMock.mock.calls[0];
+    expect(path).toBe(`projects/${PID}/labels/bug`);
+    expect(opts.method).toBe("PUT");
+    expect(opts.rawFields).toEqual([
+      "color=#ed9121",
+      "description=Broken behaviour",
+    ]);
+    expect(out).toContain("updated:");
+    expect(out).toContain("#ed9121");
+  });
+
+  it("maps --name to GitLab's new_name (a rename, not the addressed label)", async () => {
+    glApiMock.mockResolvedValueOnce(label({ name: "defect" }));
+    await labelCommand(["edit", "bug", "--name", "defect"], ctx);
+    const [path, opts] = glApiMock.mock.calls[0];
+    expect(path).toBe(`projects/${PID}/labels/bug`);
+    expect(opts.rawFields).toEqual(["new_name=defect"]);
+  });
+
+  it("url-encodes a label name with a slash", async () => {
+    glApiMock.mockResolvedValueOnce(label({ name: "type::bug" }));
+    await labelCommand(["edit", "type/bug", "--color", "#fff"], ctx);
+    expect(glApiMock.mock.calls[0][0]).toBe(
+      `projects/${PID}/labels/type%2Fbug`,
+    );
+  });
+
+  it("refuses an edit with nothing to change, before any API call", async () => {
+    await expect(labelCommand(["edit", "bug"], ctx)).rejects.toThrow(
+      "Nothing to edit",
+    );
+    expect(glApiMock).not.toHaveBeenCalled();
+  });
+
+  it("requires a label name", async () => {
+    await expect(
+      labelCommand(["edit", "--color", "#fff"], ctx),
+    ).rejects.toThrow("Missing label name");
+    expect(glApiMock).not.toHaveBeenCalled();
+  });
+});
+
 describe("label list", () => {
   it("requests labels and renders a TOON list with a count", async () => {
     glApiMock.mockResolvedValueOnce([
@@ -178,7 +236,8 @@ describe("label router", () => {
   });
 
   it("errors on unknown subcommand", async () => {
-    const out = await labelCommand(["bogus"], ctx);
-    expect(out).toContain("Unknown label subcommand");
+    await expect(labelCommand(["bogus"], ctx)).rejects.toThrow(
+      "Unknown label subcommand",
+    );
   });
 });

@@ -3,6 +3,7 @@ import { AxiError } from "../errors.js";
 import type { RepoContext } from "../context.js";
 import { formatCountLine } from "../format.js";
 import { getSuggestions } from "../suggestions.js";
+import { refuseSubcommand } from "../refusals.js";
 import { takeFlag, parseLimit } from "../args.js";
 import {
   field,
@@ -11,7 +12,6 @@ import {
   relativeTime,
   renderList,
   renderHelp,
-  renderError,
   renderOutput,
   type FieldDef,
 } from "../toon.js";
@@ -152,10 +152,13 @@ export async function searchCommand(
     default: {
       const spec = SEARCH_TYPES[type];
       if (!spec) {
-        return renderError(`Unknown search type: ${type}`, "VALIDATION_ERROR", [
-          `Valid types: ${VALID_TYPES.join(", ")}`,
-          `Run \`glab-axi search ${VALID_TYPES[0]} "<query>"\``,
-        ]);
+        refuseSubcommand("search", type, {
+          message: `Unknown search type: ${type}`,
+          help: [
+            `Valid types: ${VALID_TYPES.join(", ")}`,
+            `Run \`glab-axi search ${VALID_TYPES[0]} "<query>"\``,
+          ],
+        });
       }
       return runSearch(type, spec, rest, ctx);
     }

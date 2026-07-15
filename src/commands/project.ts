@@ -9,6 +9,7 @@ import { AxiError, scrubTool } from "../errors.js";
 import { parseRepoArg, type RepoContext } from "../context.js";
 import { formatCountLine } from "../format.js";
 import { getSuggestions } from "../suggestions.js";
+import { refuseSubcommand } from "../refusals.js";
 import { takeFlag, takeBoolFlag, getPositional, parseLimit } from "../args.js";
 import {
   field,
@@ -17,7 +18,6 @@ import {
   renderList,
   renderDetail,
   renderHelp,
-  renderError,
   renderOutput,
   type FieldDef,
 } from "../toon.js";
@@ -559,10 +559,6 @@ export async function projectCommand(
     case undefined:
       return PROJECT_HELP;
     default:
-      return renderError(
-        `Unknown project subcommand: ${sub}`,
-        "VALIDATION_ERROR",
-        ["Run `glab-axi project --help` to see available subcommands"],
-      );
+      return refuseSubcommand("project", sub);
   }
 }

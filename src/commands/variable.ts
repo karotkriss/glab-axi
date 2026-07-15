@@ -3,6 +3,7 @@ import { AxiError } from "../errors.js";
 import type { RepoContext } from "../context.js";
 import { formatCountLine } from "../format.js";
 import { getSuggestions } from "../suggestions.js";
+import { refuseSubcommand } from "../refusals.js";
 import { takeFlag, takeBoolFlag, getPositional, parseLimit } from "../args.js";
 import { readStdin } from "../stdin.js";
 import {
@@ -11,7 +12,6 @@ import {
   renderList,
   renderDetail,
   renderHelp,
-  renderError,
   renderOutput,
   type FieldDef,
 } from "../toon.js";
@@ -76,16 +76,32 @@ export interface UpsertOptions {
   env: string;
 }
 
+/** Parse a GET response body, or undefined when it isn't usable JSON. */
+function parseVariableBody(stdout: string): Json | undefined {
+  try {
+    return JSON.parse(stdout);
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Idempotent set: GET the key first, then PUT (update) if it exists or POST
- * (create) if not. Returns the variable and whether it was newly created.
+ * (create) if not. Returns the variable, whether it was newly created, and
+ * whether it was already in the target state.
+ *
+ * The `unchanged` case skips the write entirely: the GET already proves the
+ * stored value and flags match, so a PUT would only let `set` report "updated"
+ * for an update that changed nothing. Every other mutation in this CLI reports
+ * `already: true` here, and reusing the GET this function already makes costs
+ * nothing. Shared by `variable set` and `secret set`, so both inherit it.
  */
 export async function upsertVariable(
   ctx: RepoContext | undefined,
   name: string,
   value: string,
   opts: UpsertOptions,
-): Promise<{ variable: Json; created: boolean }> {
+): Promise<{ variable: Json; created: boolean; unchanged: boolean }> {
   const existing = await glApiResult(variableKeyPath(ctx, name, opts.env), {
     ctx,
   });
@@ -104,7 +120,17 @@ export async function upsertVariable(
       fields: flags,
       ctx,
     });
-    return { variable, created };
+    return { variable, created, unchanged: false };
+  }
+
+  const current = parseVariableBody(existing.stdout);
+  if (
+    current &&
+    current.value === value &&
+    current.masked === opts.masked &&
+    current.protected === opts.protected
+  ) {
+    return { variable: current, created, unchanged: true };
   }
 
   const variable = await glApi<Json>(variableKeyPath(ctx, name, opts.env), {
@@ -113,7 +139,7 @@ export async function upsertVariable(
     fields: flags,
     ctx,
   });
-  return { variable, created };
+  return { variable, created, unchanged: false };
 }
 
 /** Idempotent delete: DELETE the key; a 404 (already absent) is a no-op. */
@@ -279,22 +305,30 @@ async function variableSet(args: string[], ctx?: RepoContext): Promise<string> {
   const value = resolveValue(args, "variable");
   const name = requireName(args, "variable");
 
-  const { variable, created } = await upsertVariable(ctx, name, value, {
-    masked: false,
-    protected: isProtected,
-    env,
-  });
+  const { variable, created, unchanged } = await upsertVariable(
+    ctx,
+    name,
+    value,
+    { masked: false, protected: isProtected, env },
+  );
 
   return renderOutput([
     renderDetail(
-      created ? "created" : "updated",
+      created ? "created" : unchanged ? "variable" : "updated",
       {
         key: variable.key ?? name,
         masked: false,
         protected: variable.protected ?? isProtected,
         env: variable.environment_scope ?? env,
+        ...(unchanged ? { already: true } : {}),
       },
-      [field("key"), boolYesNo("masked"), boolYesNo("protected"), field("env")],
+      [
+        field("key"),
+        boolYesNo("masked"),
+        boolYesNo("protected"),
+        field("env"),
+        ...(unchanged ? [field("already")] : []),
+      ],
     ),
     renderHelp(
       getSuggestions({
@@ -343,10 +377,6 @@ export async function variableCommand(
     case undefined:
       return VARIABLE_HELP;
     default:
-      return renderError(
-        `Unknown variable subcommand: ${sub}`,
-        "VALIDATION_ERROR",
-        ["Run `glab-axi variable --help` to see available subcommands"],
-      );
+      return refuseSubcommand("variable", sub);
   }
 }

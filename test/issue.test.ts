@@ -312,7 +312,8 @@ describe("issue router", () => {
   });
 
   it("errors on unknown subcommand", async () => {
-    const out = await issueCommand(["bogus"], ctx);
-    expect(out).toContain("Unknown issue subcommand");
+    await expect(issueCommand(["bogus"], ctx)).rejects.toThrow(
+      "Unknown issue subcommand",
+    );
   });
 });

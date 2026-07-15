@@ -4,6 +4,7 @@ import type { RepoContext } from "../context.js";
 import { takeBody, truncateBody } from "../body.js";
 import { formatCountLine } from "../format.js";
 import { getSuggestions } from "../suggestions.js";
+import { refuseSubcommand } from "../refusals.js";
 import {
   takeFlag,
   takeBoolFlag,
@@ -19,7 +20,6 @@ import {
   renderList,
   renderDetail,
   renderHelp,
-  renderError,
   renderOutput,
   type FieldDef,
 } from "../toon.js";
@@ -110,23 +110,27 @@ function viewSchema(full: boolean): FieldDef[] {
 // ---------------------------------------------------------------------------
 
 export const RELEASE_HELP = `usage: glab-axi release <subcommand> [flags]
-subcommands[4]:
-  list, view <tag>, create <tag>, delete <tag>
+subcommands[5]:
+  list, view <tag>, create <tag>, edit <tag>, delete <tag>
 flags{list}:
   --limit <n> (default 30)
 flags{view}:
   --full (full release notes / description)
 flags{create}:
   --name <text>, --body <text> or --body-file <path>, --target <commit|branch> (source for a new tag; alias --ref), --prerelease (mark "upcoming" via a future released_at), --asset <url>[#name] (attach an asset link, repeatable)
+flags{edit}:
+  --name <text>, --body <text> or --body-file <path>, --prerelease; at least one is required. A tag's ref is fixed once created, so --target/--ref do not apply.
 flags{delete}:
   (none)
 notes:
   GitLab's Releases API has no draft/prerelease/generate-notes concepts. --prerelease dates the release in the future so it shows as "upcoming"; assets are links to hosted URLs, not uploaded files. --draft and --generate-notes are rejected with guidance (use --prerelease or omit; supply --body/--body-file) rather than silently ignored.
+  upload/download are rejected for the same reason: GitLab links release assets rather than hosting them, so attach a link with \`create --asset\` instead.
 examples:
   glab-axi release list
   glab-axi release view v1.0.0 --full
   glab-axi release create v1.0.0 --name "v1.0.0" --body-file notes.md --target main
   glab-axi release create v2.0.0-rc1 --prerelease --asset https://host/dl/app.zip#App bundle
+  glab-axi release edit v1.0.0 --body-file notes.md
   glab-axi release delete v1.0.0`;
 
 // ---------------------------------------------------------------------------
@@ -181,21 +185,20 @@ async function releaseView(args: string[], ctx?: RepoContext): Promise<string> {
   ]);
 }
 
-async function releaseCreate(
-  args: string[],
-  ctx?: RepoContext,
-): Promise<string> {
-  requireProject(ctx);
-  // GitLab's Releases API has no draft or note-generation concept. Rather than
-  // silently no-op (a silent publish of a meant-to-be-hidden release is a real
-  // surprise) or emulate an approximation, refuse loudly with a usage error
-  // (VALIDATION_ERROR -> exit 2) that guides the agent to the real GitLab path.
+/**
+ * GitLab's Releases API has no draft or note-generation concept. Rather than
+ * silently no-op (a silent publish of a meant-to-be-hidden release is a real
+ * surprise) or emulate an approximation, refuse loudly with a usage error
+ * (VALIDATION_ERROR -> exit 2) that guides the agent to the real GitLab path.
+ * Both `create` and `edit` take these flags in gh-axi, so both refuse them.
+ */
+function refuseGitHubOnlyFlags(args: string[], verb: "create" | "edit"): void {
   if (takeBoolFlag(args, "--draft")) {
     throw new AxiError(
-      "GitLab releases have no draft state - the Releases API cannot create an unpublished release",
+      `GitLab releases have no draft state - the Releases API cannot ${verb === "create" ? "create an unpublished release" : "unpublish a release"}`,
       "VALIDATION_ERROR",
       [
-        "Use --prerelease to mark the release upcoming (a future released_at), or omit --draft to publish immediately",
+        `Use --prerelease to mark the release upcoming (a future released_at), or omit --draft to ${verb === "create" ? "publish immediately" : "leave it published"}`,
       ],
     );
   }
@@ -206,6 +209,14 @@ async function releaseCreate(
       ['Provide notes explicitly with --body "..." or --body-file <path>'],
     );
   }
+}
+
+async function releaseCreate(
+  args: string[],
+  ctx?: RepoContext,
+): Promise<string> {
+  requireProject(ctx);
+  refuseGitHubOnlyFlags(args, "create");
   const name = takeFlag(args, "--name");
   const body = takeBody(args);
   // `--target` mirrors gh-axi; `--ref` is the original glab-axi name. Both map
@@ -284,6 +295,52 @@ async function releaseCreate(
     }
     throw err;
   }
+}
+
+async function releaseEdit(args: string[], ctx?: RepoContext): Promise<string> {
+  refuseGitHubOnlyFlags(args, "edit");
+  const name = takeFlag(args, "--name");
+  const body = takeBody(args);
+  const prerelease = takeBoolFlag(args, "--prerelease");
+  const tag = requireTag(args);
+  // GitLab's PUT accepts name/description/released_at only: a tag's ref is
+  // fixed once the tag exists, so --target/--ref have nothing to update here.
+  if (name === undefined && body === undefined && !prerelease)
+    throw new AxiError(
+      "Nothing to edit - pass at least one of --name, --body/--body-file, or --prerelease",
+      "VALIDATION_ERROR",
+      [
+        `glab-axi release edit ${tag} --body "..."`,
+        `glab-axi release edit ${tag} --name "<title>"`,
+      ],
+    );
+
+  const rawFields: string[] = [];
+  if (name !== undefined) rawFields.push(`name=${name}`);
+  if (body !== undefined) rawFields.push(`description=${body}`);
+  if (prerelease) rawFields.push(`released_at=${PRERELEASE_RELEASED_AT}`);
+
+  const release = await glApi<Json>(releasePath(ctx, tag), {
+    method: "PUT",
+    rawFields,
+    ctx,
+  });
+
+  const updated: Record<string, unknown> = {
+    tag: release.tag_name ?? tag,
+    name: release.name ?? name ?? null,
+  };
+  const updatedFields = [field("tag"), field("name")];
+  if (prerelease) {
+    updated.upcoming = true;
+    updatedFields.push(field("upcoming"));
+  }
+  return renderOutput([
+    renderDetail("updated", updated, updatedFields),
+    renderHelp(
+      getSuggestions({ domain: "release", action: "edit", id: tag, repo: ctx }),
+    ),
+  ]);
 }
 
 async function releaseDelete(
@@ -365,6 +422,9 @@ export async function releaseCommand(
       return releaseView(rest, ctx);
     case "create":
       return releaseCreate(rest, ctx);
+    case "edit":
+    case "update":
+      return releaseEdit(rest, ctx);
     case "delete":
       return releaseDelete(rest, ctx);
     case "--help":
@@ -373,10 +433,6 @@ export async function releaseCommand(
     case undefined:
       return RELEASE_HELP;
     default:
-      return renderError(
-        `Unknown release subcommand: ${sub}`,
-        "VALIDATION_ERROR",
-        ["Run `glab-axi release --help` to see available subcommands"],
-      );
+      return refuseSubcommand("release", sub);
   }
 }

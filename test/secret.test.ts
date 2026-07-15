@@ -86,6 +86,28 @@ describe("secret list", () => {
 });
 
 describe("secret set", () => {
+  it("inherits the shared no-op: an unchanged secret reports already, not updated", async () => {
+    glApiResultMock.mockResolvedValueOnce({
+      stdout: JSON.stringify({
+        key: "API_KEY",
+        value: "s3cret-value",
+        masked: true,
+        protected: true,
+        environment_scope: "*",
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+    const out = await secretCommand(
+      ["set", "API_KEY", "--value", "s3cret-value"],
+      ctx,
+    );
+    expect(glApiMock).not.toHaveBeenCalled();
+    expect(out).toContain("already: true");
+    // The no-op path must not leak the value either.
+    expect(out).not.toContain("s3cret-value");
+  });
+
   it("creates a masked+protected variable via POST", async () => {
     glApiResultMock.mockResolvedValueOnce({
       stdout: "",
@@ -166,7 +188,8 @@ describe("secret router", () => {
   });
 
   it("errors on unknown subcommand", async () => {
-    const out = await secretCommand(["bogus"], ctx);
-    expect(out).toContain("Unknown secret subcommand");
+    await expect(secretCommand(["bogus"], ctx)).rejects.toThrow(
+      "Unknown secret subcommand",
+    );
   });
 });

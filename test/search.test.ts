@@ -173,12 +173,16 @@ describe("search router", () => {
     expect(out).toContain("usage: glab-axi search");
   });
 
-  it("returns a renderError listing valid types for an unknown type", async () => {
-    const out = await searchCommand(["bogus", "x"], ctx);
-    expect(out).toContain("Unknown search type: bogus");
-    expect(out).toContain("issues");
-    expect(out).toContain("mrs");
-    expect(out).toContain("projects");
+  it("throws listing valid types for an unknown type", async () => {
+    // Throws rather than returning a rendered error: a usage error must exit 2,
+    // and a returned string exits 0.
+    await expect(searchCommand(["bogus", "x"], ctx)).rejects.toMatchObject({
+      message: "Unknown search type: bogus",
+      code: "VALIDATION_ERROR",
+      suggestions: expect.arrayContaining([
+        expect.stringContaining("issues, mrs, projects"),
+      ]),
+    });
     // No API call should have been made.
     expect(glApiMock).not.toHaveBeenCalled();
   });

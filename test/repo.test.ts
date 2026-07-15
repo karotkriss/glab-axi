@@ -369,7 +369,8 @@ describe("repo router", () => {
   });
 
   it("errors on an unknown subcommand", async () => {
-    const out = await repoCommand(["bogus"], ctx);
-    expect(out).toContain("Unknown repo subcommand");
+    await expect(repoCommand(["bogus"], ctx)).rejects.toThrow(
+      "Unknown repo subcommand",
+    );
   });
 });

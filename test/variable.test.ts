@@ -177,6 +177,50 @@ describe("variable set", () => {
     expect(out).toContain("updated");
   });
 
+  it("is a no-op when the stored value and flags already match", async () => {
+    glApiResultMock.mockResolvedValueOnce({
+      stdout: JSON.stringify(variable({ value: "production" })),
+      stderr: "",
+      exitCode: 0,
+    });
+    const out = await variableCommand(
+      ["set", "NODE_ENV", "--value", "production"],
+      ctx,
+    );
+    // No write at all - the GET already proved the target state.
+    expect(glApiMock).not.toHaveBeenCalled();
+    expect(out).toContain("already: true");
+    expect(out).not.toContain("updated");
+  });
+
+  it("still PUTs when only a flag differs from the stored variable", async () => {
+    glApiResultMock.mockResolvedValueOnce({
+      stdout: JSON.stringify(
+        variable({ value: "production", protected: false }),
+      ),
+      stderr: "",
+      exitCode: 0,
+    });
+    glApiMock.mockResolvedValueOnce(variable({ protected: true }));
+    const out = await variableCommand(
+      ["set", "NODE_ENV", "--value", "production", "--protected"],
+      ctx,
+    );
+    expect(glApiMock.mock.calls[0][1].method).toBe("PUT");
+    expect(out).toContain("updated");
+  });
+
+  it("falls through to a PUT when the stored body is not usable JSON", async () => {
+    glApiResultMock.mockResolvedValueOnce({
+      stdout: "not json",
+      stderr: "",
+      exitCode: 0,
+    });
+    glApiMock.mockResolvedValueOnce(variable({ value: "production" }));
+    await variableCommand(["set", "NODE_ENV", "--value", "production"], ctx);
+    expect(glApiMock.mock.calls[0][1].method).toBe("PUT");
+  });
+
   it("passes --protected through as a typed boolean", async () => {
     glApiResultMock.mockResolvedValueOnce({
       stdout: "",
@@ -233,7 +277,8 @@ describe("variable router", () => {
   });
 
   it("errors on unknown subcommand", async () => {
-    const out = await variableCommand(["bogus"], ctx);
-    expect(out).toContain("Unknown variable subcommand");
+    await expect(variableCommand(["bogus"], ctx)).rejects.toThrow(
+      "Unknown variable subcommand",
+    );
   });
 });

@@ -4,7 +4,15 @@ import { AxiError } from "../errors.js";
 import type { RepoContext } from "../context.js";
 import { formatCountLine } from "../format.js";
 import { getSuggestions, repoFlag } from "../suggestions.js";
-import { takeFlag, takeBoolFlag, takeNumber, parseLimit } from "../args.js";
+import { refuseSubcommand } from "../refusals.js";
+import { resolveDefaultBranch } from "./repo.js";
+import {
+  takeFlag,
+  takeBoolFlag,
+  takeAllFlags,
+  takeNumber,
+  parseLimit,
+} from "../args.js";
 import { sleep } from "../sleep.js";
 import {
   field,
@@ -14,7 +22,6 @@ import {
   renderList,
   renderDetail,
   renderHelp,
-  renderError,
   renderOutput,
   type FieldDef,
 } from "../toon.js";
@@ -52,6 +59,19 @@ function classifyJob(job: Json): Bucket {
     default:
       return "neutral";
   }
+}
+
+/** Parse a `--field KEY=value` pipeline variable. The value may contain "=". */
+function parseVariable(raw: string): { key: string; value: string } {
+  const eq = raw.indexOf("=");
+  if (eq <= 0) {
+    throw new AxiError(
+      `--field must be KEY=value: ${raw}`,
+      "VALIDATION_ERROR",
+      ["Run `glab-axi ci run --ref main --field DEPLOY_ENV=staging`"],
+    );
+  }
+  return { key: raw.slice(0, eq), value: raw.slice(eq + 1) };
 }
 
 // ---------------------------------------------------------------------------
@@ -158,8 +178,8 @@ function renderJobs(jobs: Json[]): string {
 // ---------------------------------------------------------------------------
 
 export const CI_HELP = `usage: glab-axi ci <subcommand> [flags]
-subcommands[7]:
-  list, view <id>, status, jobs <pipeline-id>, watch <pipeline-id>, log <job-id>, retry <pipeline-id>
+subcommands[9]:
+  list, view <id>, status, jobs <pipeline-id>, watch <pipeline-id>, log <job-id>, run, retry <pipeline-id>, cancel <pipeline-id>
 flags{list}:
   --ref <branch>, --status <created|pending|running|success|failed|canceled|skipped|manual>, --limit <n> (default 20)
 flags{status}:
@@ -168,8 +188,12 @@ flags{watch}:
   --interval <seconds> (default 8), --timeout <seconds> (default 1800)
 flags{log}:
   --full (return the entire trace instead of the last 20000 chars)
+flags{run}:
+  --ref <branch|tag> (default: the project's default branch), --field <KEY=value> (pipeline variable, repeatable)
 notes:
   watch blocks until the pipeline finishes, prints the final verdict, and exits non-zero if it did not succeed.
+  run triggers a new pipeline from the project's .gitlab-ci.yml on --ref. GitLab has no workflow entity to select or dispatch (the ref determines what runs), so there is no workflow list/enable/disable here.
+  cancel is a no-op (already: true) on a pipeline that already finished.
 examples:
   glab-axi ci list --ref main --status failed
   glab-axi ci view 12345
@@ -178,7 +202,9 @@ examples:
   glab-axi ci jobs 12345
   glab-axi ci watch 12345
   glab-axi ci log 67890
-  glab-axi ci retry 12345`;
+  glab-axi ci run --ref main --field DEPLOY_ENV=staging
+  glab-axi ci retry 12345
+  glab-axi ci cancel 12345`;
 
 // ---------------------------------------------------------------------------
 // Subcommands
@@ -447,6 +473,83 @@ async function ciRetry(args: string[], ctx?: RepoContext): Promise<string> {
   ]);
 }
 
+async function ciCancel(args: string[], ctx?: RepoContext): Promise<string> {
+  const pid = takeNumber(args, "pipeline");
+
+  // Idempotent: GET first and skip the POST when the pipeline already finished.
+  // This reuses `ci watch`'s terminal-state rule rather than relying on how
+  // GitLab answers a cancel on a finished pipeline, which varies by version.
+  // Reporting `status` from the GET is also the honest answer - a canceled
+  // pipeline says `canceled`, a passed one still says `success`.
+  const current = await glApi<Json>(
+    `projects/${requireProject(ctx)}/pipelines/${pid}`,
+    { ctx },
+  );
+  if (isPipelineTerminal(current?.status)) {
+    return renderOutput([
+      renderDetail("pipeline", { ...current, already: true }, [
+        field("id"),
+        lower("status"),
+        field("already"),
+      ]),
+      renderHelp(
+        getSuggestions({ domain: "ci", action: "cancel", id: pid, repo: ctx }),
+      ),
+    ]);
+  }
+
+  const pipeline = await glApi<Json>(
+    `projects/${requireProject(ctx)}/pipelines/${pid}/cancel`,
+    { method: "POST", ctx },
+  );
+  return renderOutput([
+    renderDetail("canceled", pipeline, [field("id"), lower("status")]),
+    renderHelp(
+      getSuggestions({ domain: "ci", action: "cancel", id: pid, repo: ctx }),
+    ),
+  ]);
+}
+
+async function ciRun(args: string[], ctx?: RepoContext): Promise<string> {
+  const refFlag = takeFlag(args, "--ref");
+  const variables = takeAllFlags(args, "--field").map(parseVariable);
+  const ref =
+    refFlag ??
+    (await resolveDefaultBranch(ctx, [
+      "Pass --ref <branch> to run the pipeline on a specific branch or tag",
+    ]));
+
+  const rawFields = [`ref=${ref}`];
+  for (const v of variables) {
+    // Emit key then value per variable: GitLab's Rails param parser starts a
+    // new object once it sees a subkey the current one already has, so paired
+    // key/value runs group into distinct variables (same rule as release assets).
+    rawFields.push(`variables[][key]=${v.key}`);
+    rawFields.push(`variables[][value]=${v.value}`);
+  }
+
+  const pipeline = await glApi<Json>(
+    `projects/${requireProject(ctx)}/pipeline`,
+    { method: "POST", rawFields, ctx },
+  );
+  return renderOutput([
+    renderDetail("created", { ...pipeline, ref: pipeline?.ref ?? ref }, [
+      field("id"),
+      field("ref"),
+      lower("status"),
+      field("web_url", "url"),
+    ]),
+    renderHelp(
+      getSuggestions({
+        domain: "ci",
+        action: "run",
+        id: pipeline?.id,
+        repo: ctx,
+      }),
+    ),
+  ]);
+}
+
 // ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
@@ -472,14 +575,16 @@ export async function ciCommand(
       return ciLog(rest, ctx);
     case "retry":
       return ciRetry(rest, ctx);
+    case "cancel":
+      return ciCancel(rest, ctx);
+    case "run":
+      return ciRun(rest, ctx);
     case "--help":
     case "-h":
     case "help":
     case undefined:
       return CI_HELP;
     default:
-      return renderError(`Unknown ci subcommand: ${sub}`, "VALIDATION_ERROR", [
-        "Run `glab-axi ci --help` to see available subcommands",
-      ]);
+      return refuseSubcommand("ci", sub);
   }
 }
