@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- npm publishing now authenticates with npm Trusted Publishing (OIDC) instead of a long-lived `NPM_TOKEN` secret. The registry mints a short-lived credential from the release workflow's GitHub Actions identity, so no npm token is stored in the repo and none needs to be rotated. Maintainers register the trusted publisher once on npmjs.com against this repo, the `release.yml` filename, and the `npm-publish` environment; see the `glab-axi-release` skill.
+- The release workflow pins Node 24 and asserts the resolved Node and npm against the trusted-publishing floors (Node >= 22.14.0, npm >= 11.5.1) before it reaches the publish step. No Node 22 release bundles an npm that new, so Node 24 is the lowest line that clears both without an extra upgrade step. This is the CI publisher's floor only and does not change the Node range the package supports for its users.
+- The release workflow no longer passes `--provenance`; trusted publishing generates and signs provenance by default from GitHub Actions. Published packages keep their provenance attestation.
+
+### Fixed
+
+- The `workflow_dispatch` dry run no longer claims to verify npm auth. It asserted that `npm whoami` proved "the token and the publish pipeline are wired correctly", but `whoami` needs no one-time password, so it passed green while the v0.2.0 publish failed with `EOTP`. `npm publish --dry-run` never contacts the registry for credentials and cannot verify auth at all, so the dry run now reports only what it actually checks: install, build, test, and a packed and validated tarball.
+- Added the CHANGELOG reference-link definitions that the release skill's step 1 requires, omitted during the 0.2.0 release prep.
+
 ## [0.2.0] - 2026-07-15
 
 ### Added
@@ -66,3 +77,7 @@ First published release.
 - `setup hooks` - idempotent `SessionStart` hooks for Claude Code, Codex, and OpenCode.
 - Installable Agent Skill generated from the CLI's own help, with a CI freshness check.
 - Generic host/project targeting via `-R [host/]group/project`, the `origin` git remote, or `GITLAB_HOST` (host-only override).
+
+[Unreleased]: https://github.com/karotkriss/glab-axi/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/karotkriss/glab-axi/releases/tag/v0.2.0
+[0.1.0]: https://github.com/karotkriss/glab-axi/releases/tag/v0.1.0
