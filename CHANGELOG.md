@@ -25,6 +25,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Unknown flags are now rejected instead of silently ignored (AXI principle 6).
+  A typo'd flag was dropped along with its value, so `issue list --stat closed` returned **open** issues and exited 0: the agent asked for closed issues, got the wrong dataset, and the exit code reported success.
+  Every command that has flags now validates them against its own `--help` flag table before making any request, and exits 2 naming the offending flag, the near-miss (`Did you mean --state?`), and the valid set for that subcommand.
+  Validation lands before the call, so a typo'd `--env` can no longer write a CI/CD variable to every environment scope instead of the one named.
+  `api` is exempt: it is the deliberate raw passthrough.
+- A flag is now rejected when it belongs to a different subcommand of the same command, and says which one: `issue view 42 --state closed` names `--state` as a flag of `issue list`.
+- The generic unknown-subcommand error now inlines the valid subcommands instead of pointing at `--help`, which cost the agent a round trip to learn what it could have been told immediately (AXI principle 9).
+- `secret list --limit` is now documented; it was honoured but absent from `secret --help`.
+- The `mr list`/`mr view` `--raw` alias of `--json`, and the `update`/`edit`, `delete`/`rm`, and `get`/`view` subcommand aliases, are now documented rather than working undocumented.
 - The `workflow_dispatch` dry run no longer claims to verify npm auth. It asserted that `npm whoami` proved "the token and the publish pipeline are wired correctly", but `whoami` needs no one-time password, so it passed green while the v0.2.0 publish failed with `EOTP`. `npm publish --dry-run` never contacts the registry for credentials and cannot verify auth at all, so the dry run now reports only what it actually checks: install, build, test, and a packed and validated tarball.
 - Added the CHANGELOG reference-link definitions that the release skill's step 1 requires, omitted during the 0.2.0 release prep.
 - `-R [host/]group/project` no longer rejects a namespace containing a dot. It previously decided the host by looking for a dot in the first segment, so a two-segment value like `firstname.lastname/project` (the standard username shape on LDAP/SSO GitLab instances) had its namespace mistaken for a hostname and failed to resolve. Disambiguation is now by segment count and known hosts: a two-segment value is always `group/project`; only a 3+-segment value can lead with a host, and then only when it's a host `glab` is already configured for (`src/hosts.ts`) or, as a last resort, contains a dot.

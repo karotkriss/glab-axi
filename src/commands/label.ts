@@ -49,9 +49,9 @@ flags{list}:
   --limit <n> (default 100)
 flags{create}:
   --name <text> (required), --color <hex> (required, e.g. "#ed9121"), --description <text>
-flags{edit}:
+flags{edit,update}:
   --name <text> (rename), --color <hex>, --description <text>; at least one is required
-flags{delete}:
+flags{delete,rm}:
   <name> (positional, required)
 examples:
   glab-axi label list
@@ -272,6 +272,6 @@ export async function labelCommand(
     case undefined:
       return LABEL_HELP;
     default:
-      return refuseSubcommand("label", sub);
+      return refuseSubcommand("label", sub, LABEL_HELP);
   }
 }

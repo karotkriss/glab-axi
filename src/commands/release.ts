@@ -123,14 +123,15 @@ flags{list}:
 flags{view}:
   --full (full release notes / description)
 flags{create}:
-  --name <text>, --body <text> or --body-file <path>, --target <commit|branch> (source for a new tag; alias --ref), --prerelease (mark "upcoming" via a future released_at), --asset <url>[#name] (attach an asset link, repeatable)
-flags{edit}:
-  --name <text>, --body <text> or --body-file <path>, --prerelease; at least one is required. A tag's ref is fixed once created, so --target/--ref do not apply.
+  --name <text>, --body <text> or --body-file <path>, --target <commit|branch> (source for a new tag; alias --ref), --prerelease (mark "upcoming" via a future released_at), --asset <url>[#name] (attach an asset link, repeatable), --draft | --generate-notes (GitHub concepts; refused with guidance)
+flags{edit,update}:
+  --name <text>, --body <text> or --body-file <path>, --prerelease, --draft | --generate-notes (refused with guidance); at least one of name/body/prerelease is required
 flags{delete}:
   (none)
 notes:
   GitLab's Releases API has no draft/prerelease/generate-notes concepts. --prerelease dates the release in the future so it shows as "upcoming"; assets are links to hosted URLs, not uploaded files. --draft and --generate-notes are rejected with guidance (use --prerelease or omit; supply --body/--body-file) rather than silently ignored.
   upload/download are rejected for the same reason: GitLab links release assets rather than hosting them, so attach a link with \`create --asset\` instead.
+  A tag's ref is fixed once the tag exists, so edit has no --target/--ref to update; recreate the tag to move it.
 examples:
   glab-axi release list
   glab-axi release view v1.0.0 --full
@@ -439,6 +440,6 @@ export async function releaseCommand(
     case undefined:
       return RELEASE_HELP;
     default:
-      return refuseSubcommand("release", sub);
+      return refuseSubcommand("release", sub, RELEASE_HELP);
   }
 }

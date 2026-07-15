@@ -58,7 +58,7 @@ flags{view}:
 flags{list}:
   --search <q>, --limit <n> (default 30)
 flags{create}:
-  --public | --internal | --private (visibility; default private), --description <text>, --readme (initialize with a README)
+  --public | --internal | --private (visibility; default private), --description <text>, --readme (initialize with a README), --template | --clone (GitHub concepts; refused with guidance)
 flags{delete}:
   --yes/-y (required: confirms the deletion)
 notes:
@@ -562,6 +562,6 @@ export async function projectCommand(
     case undefined:
       return PROJECT_HELP;
     default:
-      return refuseSubcommand("project", sub);
+      return refuseSubcommand("project", sub, PROJECT_HELP);
   }
 }

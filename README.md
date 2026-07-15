@@ -15,6 +15,7 @@ Agents drive CLIs by reading stdout. Raw `glab`/REST output is verbose JSON full
 - **Idempotent mutations** - closing a closed issue or merging a merged MR is a no-op with exit 0.
 - **Definitive empty states** and **contextual `help[]` suggestions** on every list and mutation.
 - **Structured errors on stdout** - actionable, and they never leak the underlying tool's name.
+- **Fails loud on a typo** - an unrecognized flag or subcommand exits 2 naming what was wrong and listing the valid set, rather than being dropped. A silently ignored `--stat closed` would hand back open issues at exit 0, and an agent cannot tell that from the filtered result it asked for.
 
 ## Quick Start
 
