@@ -365,7 +365,7 @@ async function ciWatch(args: string[], ctx?: RepoContext): Promise<string> {
       `Timed out after ~${timeoutSec}s waiting for pipeline ${pid} to finish`,
       "TIMEOUT",
       [
-        `Run \`glab-axi${repoFlag({ domain: "ci", action: "watch", repo: ctx })} ci view ${pid}\` to check current status`,
+        `Run \`glab-axi ci view ${pid}${repoFlag({ domain: "ci", action: "watch", repo: ctx })}\` to check current status`,
         "Increase the wait with `--timeout <seconds>`",
       ],
     );
