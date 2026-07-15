@@ -39,6 +39,8 @@ Run with no arguments for a dashboard of the current project (open issues, open 
 glab-axi
 ```
 
+If no GitLab project resolves, it prints `project: none` with a hint instead of guessing. If a request to the server fails, the affected section renders `unavailable - <reason>` rather than a false `0 open` - a real zero and "could not ask the server" are different facts.
+
 Drill in command-first:
 
 ```sh
@@ -81,6 +83,8 @@ Issues and merge requests are addressed by their project-scoped **IID** (the num
 1. `-R [host/]group/project` placed **after** the command (e.g. `glab-axi mr list -R gitlab.example.com/group/project`). A two-segment value is always `group/project`, even when the group name contains a dot (e.g. `firstname.lastname`, the standard username shape on LDAP/SSO instances); only a 3+-segment value can lead with a host, and then only when it's a host `glab` is already configured for or (as a last resort) contains a dot. Nested group paths are supported.
 2. The `origin` git remote of the current repository.
 
+A git remote only resolves to a project when its host is one the `glab` CLI is actually configured for, or when `GITLAB_HOST` explicitly names that host. A remote on a different forge (GitHub, Bitbucket, etc.) resolves to no project rather than a guess.
+
 `GITLAB_HOST` **overrides only the host** of an already-resolved project; on its own it does not select a project (there is no namespace to infer from a bare hostname).
 
 `mr view`, `mr checks`, and `mr diff` also accept a full merge request URL in place of the IID (e.g. `glab-axi mr view https://gitlab.example.com/group/project/-/merge_requests/42`); the URL's own host/project target the request, unless an explicit `-R` flag overrides it.
@@ -119,6 +123,7 @@ Both are idempotent: an existing file or branch is a no-op (`already: true`), ne
 
 `project delete` is destructive, so it takes its target as an explicit positional (a numeric project id, or a `[host/]group/project` path) rather than falling back to the resolved project, and it requires `--yes` - it never prompts.
 Deleting an already-absent project is a no-op (`already_absent: true`).
+The reported outcome is read back from the server, not assumed: on instances with delayed project deletion enabled the project isn't purged immediately, it's renamed and marked for deletion, so the response reports `status: scheduled` plus `purge_after` instead of `status: ok` (deleting an already-scheduled project again is also a no-op, `already: true`).
 
 ### Raw API passthrough
 
