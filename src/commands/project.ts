@@ -58,7 +58,7 @@ flags{view}:
 flags{list}:
   --search <q>, --limit <n> (default 30)
 flags{create}:
-  --public! | --internal! | --private! (visibility; default private), --description <text>, --readme! (initialize with a README), --template! | --clone! (GitHub concepts; refused with guidance)
+  --public! | --internal! | --private! (visibility; default private), --description <text>, --readme! (initialize with a README), --template <owner/repo> | --clone! (GitHub concepts; refused with guidance)
 flags{delete}:
   --yes!/-y (required: confirms the deletion)
 notes:
