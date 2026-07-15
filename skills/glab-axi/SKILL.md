@@ -22,7 +22,7 @@ Use glab-axi whenever a task touches GitLab: listing, filing, or editing issues;
 
 1. Run `npx -y glab-axi` with no arguments for a dashboard of the current project - open issues, open merge requests, and suggested next commands.
 2. Drill in command-first: `issue list`, `issue view <iid>`, `mr view <iid> --full`, `ci status --branch <b>`, `ci log <job-id>`, and so on.
-3. Target another project by placing `-R [host/]group/project` AFTER the command, e.g. `npx -y glab-axi mr list -R gitlab.example.com/group/project`. A first segment containing a dot is treated as the host. `GITLAB_HOST` overrides only the host; it does not by itself select a project.
+3. Target another project by placing `-R [host/]group/project` AFTER the command, e.g. `npx -y glab-axi mr list -R gitlab.example.com/group/project`. A two-segment value is always `group/project` (dotted namespaces like `firstname.lastname` work); only 3+ segments can lead with a host. `GITLAB_HOST` overrides only the host; it does not by itself select a project.
 4. Debug CI with `ci status --mr <iid>` or `ci status --branch <b>`, then `ci jobs <pipeline-id>` and `ci log <job-id>` for failing log lines (tail kept; use `--full` for the complete trace).
 5. Every response ends with contextual next-step hints under `help:` - follow them.
 
