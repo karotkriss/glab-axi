@@ -6,7 +6,7 @@ import type { RepoContext } from "../src/context.js";
 
 const repo: RepoContext = {
   host: "dev.example.gy",
-  project: "christopher.mckay/my-project",
+  project: "firstname.lastname/my-project",
   source: "flag",
 };
 
@@ -100,7 +100,9 @@ describe("suggestions", () => {
     });
     expect(lines.length).toBeGreaterThan(0);
     for (const line of lines) {
-      expect(line).toContain(" -R dev.example.gy/christopher.mckay/my-project");
+      expect(line).toContain(
+        " -R dev.example.gy/firstname.lastname/my-project",
+      );
       expect(line).not.toContain("glab-axi -R");
     }
   });
