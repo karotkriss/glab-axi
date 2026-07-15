@@ -197,6 +197,7 @@ notes:
   watch blocks until the pipeline finishes, prints the final verdict, and exits non-zero if it did not succeed.
   run triggers a new pipeline from the project's .gitlab-ci.yml on --ref. GitLab has no workflow entity to select or dispatch (the ref determines what runs), so there is no workflow list/enable/disable here.
   cancel is a no-op (already: true) on a pipeline that already finished.
+  log strips ANSI escapes before measuring; a truncated log also spills the full trace to a local temp file (full_log) to grep instead of paying for --full.
 examples:
   glab-axi ci list --ref main --status failed
   glab-axi ci view 12345

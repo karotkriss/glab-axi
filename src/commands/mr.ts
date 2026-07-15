@@ -335,6 +335,8 @@ flags{checks}:
   (none) - prints the MR pipeline's aggregate pass/fail/running counts + verdict
 flags{comment}:
   --body <text> or --body-file <path> (required)
+notes:
+  merge diagnoses a refusal (conflicts, draft, unresolved discussions, missing approvals, a pending pipeline, etc.) instead of passing through GitLab's opaque error, and suggests the command that clears it.
 examples:
   glab-axi mr list --state all --head feature-1 --limit 1
   glab-axi mr view 42 --full

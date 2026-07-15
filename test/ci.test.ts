@@ -1,4 +1,12 @@
-import { readFileSync, readdirSync, mkdirSync, chmodSync } from "node:fs";
+import {
+  readFileSync,
+  readdirSync,
+  mkdirSync,
+  mkdtempSync,
+  chmodSync,
+  symlinkSync,
+  rmSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -562,6 +570,27 @@ describe("ci log token efficiency (AXI clause 1)", () => {
       expect(dirname(match![1])).not.toBe(stableDir);
     } finally {
       chmodSync(stableDir, 0o700);
+    }
+  });
+
+  it("refuses to write through a pre-planted symlink at the stable spill dir path", async () => {
+    const stableDir = join(tmpdir(), "glab-axi-logs");
+    rmSync(stableDir, { recursive: true, force: true });
+    const decoyDir = mkdtempSync(join(tmpdir(), "glab-axi-decoy-"));
+    symlinkSync(decoyDir, stableDir);
+    try {
+      const trace = `${ESC}[0K` + "x".repeat(30000) + "\nboom\n";
+      glRawMock.mockResolvedValueOnce(trace);
+      const out = await ciCommand(["log", "48300"], ctx);
+      const match = out.match(/full_log: (\S+)/);
+      expect(match).not.toBeNull();
+      // Falls back to a fresh mkdtemp dir instead of following the symlink and
+      // writing the trace into the decoy directory it points at.
+      expect(dirname(match![1])).not.toBe(decoyDir);
+      expect(readdirSync(decoyDir)).toEqual([]);
+    } finally {
+      rmSync(stableDir, { recursive: true, force: true });
+      rmSync(decoyDir, { recursive: true, force: true });
     }
   });
 
