@@ -221,7 +221,11 @@ async function ciList(args: string[], ctx?: RepoContext): Promise<string> {
 
   const params = new URLSearchParams();
   params.set("per_page", String(limit));
-  params.set("order_by", "updated_at");
+  // `order_by=updated_at` 500s on projects with a huge pipelines table (no
+  // index backs that sort there), so it fails on exactly the projects with the
+  // most CI history. `id` is GitLab's own default for this endpoint and sorts
+  // newest-created first, which is the "latest pipeline" `ci list` promises.
+  params.set("order_by", "id");
   if (ref) params.set("ref", ref);
   if (status) params.set("status", status);
 
