@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, lstatSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { encode } from "@toon-format/toon";
@@ -444,24 +444,51 @@ function stripAnsi(text: string): string {
   return text.replace(ANSI_PATTERN, "");
 }
 
+const SPILL_DIR = join(tmpdir(), "glab-axi-logs");
+
+/**
+ * Create (or reuse) the stable spill directory, refusing to write through a
+ * pre-planted symlink in the shared tmp root. `lstatSync` deliberately does not
+ * follow symlinks, so a symlink at SPILL_DIR - real dir or not - fails the
+ * `isDirectory()` check and the caller falls back to a fresh mkdtemp dir instead
+ * of writing a trace (which can carry leaked CI secrets) through it.
+ */
+function ensureSpillDir(): string {
+  mkdirSync(SPILL_DIR, { recursive: true, mode: 0o700 });
+  if (!lstatSync(SPILL_DIR).isDirectory()) {
+    throw new Error("spill directory is not a real directory");
+  }
+  return SPILL_DIR;
+}
+
 /**
  * Spill the whole trace to a temp file so `--full` is not the only way out of a
  * truncated log: the agent greps the file for earlier context instead of paying
  * for the entire trace in its context window.
+ *
+ * Written into one stable per-user directory, keyed by job id, so a repeat
+ * `ci log` on the same job overwrites its file instead of stranding a fresh
+ * directory every call.
  *
  * Returns undefined when the write fails - the path is reported only if the file
  * is really there, and a read-only tmpdir must not fail a read-only command.
  */
 function spillLog(jobId: number, trace: string): string | undefined {
   try {
-    const file = join(
-      mkdtempSync(join(tmpdir(), "glab-axi-logs-")),
-      `${jobId}-trace.log`,
-    );
+    const file = join(ensureSpillDir(), `${jobId}-trace.log`);
     writeFileSync(file, trace);
     return file;
   } catch {
-    return undefined;
+    try {
+      const file = join(
+        mkdtempSync(join(tmpdir(), "glab-axi-logs-")),
+        `${jobId}-trace.log`,
+      );
+      writeFileSync(file, trace);
+      return file;
+    } catch {
+      return undefined;
+    }
   }
 }
 
