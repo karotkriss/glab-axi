@@ -35,11 +35,11 @@ describe("parseRepoArg", () => {
   });
 
   it("resolves a dotted namespace as group/project, not as a host", () => {
-    // The bug: "christopher.mckay" was eaten as a hostname, leaving one
+    // The bug: "firstname.lastname" was eaten as a hostname, leaving one
     // segment, which failed the length guard and returned undefined.
-    expect(parseRepoArg("christopher.mckay/my-project", "flag")).toEqual({
+    expect(parseRepoArg("firstname.lastname/my-project", "flag")).toEqual({
       host: undefined,
-      project: "christopher.mckay/my-project",
+      project: "firstname.lastname/my-project",
       source: "flag",
     });
   });
@@ -54,10 +54,10 @@ describe("parseRepoArg", () => {
 
   it("leads with a host when the first segment is a known host", () => {
     expect(
-      parseRepoArg("dev.example.gy/christopher.mckay/my-project", "flag"),
+      parseRepoArg("dev.example.gy/firstname.lastname/my-project", "flag"),
     ).toEqual({
       host: "dev.example.gy",
-      project: "christopher.mckay/my-project",
+      project: "firstname.lastname/my-project",
       source: "flag",
     });
   });
@@ -104,9 +104,9 @@ describe("parseRepoArg", () => {
       project: "group/project",
       source: "flag",
     });
-    expect(parseRepoArg("christopher.mckay/my-project", "flag")).toEqual({
+    expect(parseRepoArg("firstname.lastname/my-project", "flag")).toEqual({
       host: undefined,
-      project: "christopher.mckay/my-project",
+      project: "firstname.lastname/my-project",
       source: "flag",
     });
   });
@@ -118,9 +118,9 @@ describe("parseRepoArg", () => {
   });
 
   it("tolerates surrounding slashes", () => {
-    expect(parseRepoArg("/christopher.mckay/my-project/", "flag")).toEqual({
+    expect(parseRepoArg("/firstname.lastname/my-project/", "flag")).toEqual({
       host: undefined,
-      project: "christopher.mckay/my-project",
+      project: "firstname.lastname/my-project",
       source: "flag",
     });
   });
