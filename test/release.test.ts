@@ -266,6 +266,57 @@ describe("release create", () => {
   });
 });
 
+describe("release edit", () => {
+  it("PUTs the changed fields to the tag's release", async () => {
+    glApiMock.mockResolvedValueOnce({ tag_name: "v1.0.0", name: "One" });
+    const out = await releaseCommand(
+      ["edit", "v1.0.0", "--name", "One", "--body", "notes"],
+      ctx,
+    );
+    const [path, opts] = glApiMock.mock.calls[0];
+    expect(path).toBe(`projects/${PID}/releases/v1.0.0`);
+    expect(opts.method).toBe("PUT");
+    expect(opts.rawFields).toEqual(["name=One", "description=notes"]);
+    expect(out).toContain("updated:");
+  });
+
+  it("maps --prerelease to a future released_at", async () => {
+    glApiMock.mockResolvedValueOnce({ tag_name: "v2", name: null });
+    const out = await releaseCommand(["edit", "v2", "--prerelease"], ctx);
+    expect(glApiMock.mock.calls[0][1].rawFields).toEqual([
+      "released_at=9999-01-01T00:00:00Z",
+    ]);
+    expect(out).toContain("upcoming");
+  });
+
+  it("refuses --draft on edit, like create", async () => {
+    await expect(
+      releaseCommand(["edit", "v1", "--draft"], ctx),
+    ).rejects.toThrow("no draft state");
+    expect(glApiMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses --generate-notes on edit, like create", async () => {
+    await expect(
+      releaseCommand(["edit", "v1", "--generate-notes"], ctx),
+    ).rejects.toThrow("no note-generation concept");
+    expect(glApiMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses an edit with nothing to change, before any API call", async () => {
+    await expect(releaseCommand(["edit", "v1"], ctx)).rejects.toThrow(
+      "Nothing to edit",
+    );
+    expect(glApiMock).not.toHaveBeenCalled();
+  });
+
+  it("requires a tag", async () => {
+    await expect(releaseCommand(["edit", "--body", "x"], ctx)).rejects.toThrow(
+      "Missing release tag",
+    );
+  });
+});
+
 describe("release delete", () => {
   it("GETs then DELETEs the encoded tag path on success", async () => {
     // GET existence check (release present), then the DELETE.
@@ -317,7 +368,8 @@ describe("release router", () => {
   });
 
   it("errors on unknown subcommand", async () => {
-    const out = await releaseCommand(["bogus"], ctx);
-    expect(out).toContain("Unknown release subcommand");
+    await expect(releaseCommand(["bogus"], ctx)).rejects.toThrow(
+      "Unknown release subcommand",
+    );
   });
 });

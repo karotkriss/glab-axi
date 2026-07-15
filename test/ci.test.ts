@@ -373,6 +373,93 @@ describe("ci retry", () => {
   });
 });
 
+describe("ci cancel", () => {
+  it("POSTs cancel for a running pipeline and reports the returned status", async () => {
+    glApiMock
+      .mockResolvedValueOnce({ id: 12345, status: "running" })
+      .mockResolvedValueOnce({ id: 12345, status: "canceled" });
+    const out = await ciCommand(["cancel", "12345"], ctx);
+    expect(glApiMock.mock.calls[0][0]).toBe(`projects/${PID}/pipelines/12345`);
+    const [path, opts] = glApiMock.mock.calls[1];
+    expect(path).toBe(`projects/${PID}/pipelines/12345/cancel`);
+    expect(opts.method).toBe("POST");
+    expect(out).toContain("canceled:");
+    expect(out).toContain("canceled");
+  });
+
+  it("is a no-op on a pipeline that already finished", async () => {
+    glApiMock.mockResolvedValueOnce({ id: 12345, status: "success" });
+    const out = await ciCommand(["cancel", "12345"], ctx);
+    expect(glApiMock).toHaveBeenCalledTimes(1); // no POST
+    expect(out).toContain("already: true");
+    // Reports the real status, not a fabricated "canceled".
+    expect(out).toContain("success");
+  });
+
+  it("treats an unknown status as terminal rather than cancelling blindly", async () => {
+    glApiMock.mockResolvedValueOnce({ id: 1, status: "some_future_status" });
+    const out = await ciCommand(["cancel", "1"], ctx);
+    expect(glApiMock).toHaveBeenCalledTimes(1);
+    expect(out).toContain("already: true");
+  });
+});
+
+describe("ci run", () => {
+  it("POSTs a pipeline on the given ref", async () => {
+    glApiMock.mockResolvedValueOnce({
+      id: 999,
+      ref: "main",
+      status: "created",
+      web_url: "https://gitlab.example.com/group/project/-/pipelines/999",
+    });
+    const out = await ciCommand(["run", "--ref", "main"], ctx);
+    const [path, opts] = glApiMock.mock.calls[0];
+    expect(path).toBe(`projects/${PID}/pipeline`);
+    expect(opts.method).toBe("POST");
+    expect(opts.rawFields).toEqual(["ref=main"]);
+    expect(out).toContain("created:");
+    expect(out).toContain("999");
+  });
+
+  it("emits key then value per --field so Rails groups the variables", async () => {
+    glApiMock.mockResolvedValueOnce({ id: 1, ref: "main", status: "created" });
+    await ciCommand(
+      ["run", "--ref", "main", "--field", "A=1", "--field", "B=2"],
+      ctx,
+    );
+    expect(glApiMock.mock.calls[0][1].rawFields).toEqual([
+      "ref=main",
+      "variables[][key]=A",
+      "variables[][value]=1",
+      "variables[][key]=B",
+      "variables[][value]=2",
+    ]);
+  });
+
+  it("keeps '=' inside a --field value", async () => {
+    glApiMock.mockResolvedValueOnce({ id: 1, ref: "main", status: "created" });
+    await ciCommand(["run", "--ref", "main", "--field", "URL=a=b"], ctx);
+    expect(glApiMock.mock.calls[0][1].rawFields).toContain(
+      "variables[][value]=a=b",
+    );
+  });
+
+  it("rejects a --field that is not KEY=value", async () => {
+    await expect(
+      ciCommand(["run", "--ref", "main", "--field", "NOPE"], ctx),
+    ).rejects.toThrow("--field must be KEY=value");
+    expect(glApiMock).not.toHaveBeenCalled();
+  });
+
+  it("defaults --ref to the project's default branch", async () => {
+    glApiMock
+      .mockResolvedValueOnce({ default_branch: "trunk" })
+      .mockResolvedValueOnce({ id: 2, ref: "trunk", status: "created" });
+    await ciCommand(["run"], ctx);
+    expect(glApiMock.mock.calls[1][1].rawFields).toEqual(["ref=trunk"]);
+  });
+});
+
 describe("ci router", () => {
   it("returns help for no subcommand", async () => {
     const out = await ciCommand([], ctx);
@@ -380,7 +467,8 @@ describe("ci router", () => {
   });
 
   it("errors on unknown subcommand", async () => {
-    const out = await ciCommand(["bogus"], ctx);
-    expect(out).toContain("Unknown ci subcommand");
+    await expect(ciCommand(["bogus"], ctx)).rejects.toThrow(
+      "Unknown ci subcommand",
+    );
   });
 });

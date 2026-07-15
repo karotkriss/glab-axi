@@ -3,15 +3,10 @@ import { AxiError } from "../errors.js";
 import type { RepoContext } from "../context.js";
 import { takeBody } from "../body.js";
 import { getSuggestions } from "../suggestions.js";
+import { refuseSubcommand } from "../refusals.js";
 import { takeFlag, getPositional } from "../args.js";
 import { readStdin } from "../stdin.js";
-import {
-  field,
-  renderDetail,
-  renderHelp,
-  renderError,
-  renderOutput,
-} from "../toon.js";
+import { field, renderDetail, renderHelp, renderOutput } from "../toon.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -66,7 +61,7 @@ function resolveContent(args: string[]): string {
  * costs one GET, but the alternative is the caller making that same lookup
  * (`project view`) before every write.
  */
-async function resolveDefaultBranch(
+export async function resolveDefaultBranch(
   ctx: RepoContext | undefined,
   suggestions: string[],
 ): Promise<string> {
@@ -266,10 +261,6 @@ export async function repoCommand(
     case undefined:
       return REPO_HELP;
     default:
-      return renderError(
-        `Unknown repo subcommand: ${sub}`,
-        "VALIDATION_ERROR",
-        ["Run `glab-axi repo --help` to see available subcommands"],
-      );
+      return refuseSubcommand("repo", sub);
   }
 }

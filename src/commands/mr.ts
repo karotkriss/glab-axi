@@ -17,6 +17,7 @@ import { resolveMrPipeline, fetchJobs, renderSummary } from "./ci.js";
 import { takeBody, truncateBody } from "../body.js";
 import { formatCountLine } from "../format.js";
 import { getSuggestions, repoFlag } from "../suggestions.js";
+import { refuseSubcommand } from "../refusals.js";
 import { takeFlag, takeBoolFlag, takeNumber, parseLimit } from "../args.js";
 import { parseFields, type FieldSpec } from "../fields.js";
 import { resolveUserId, resolveMilestoneId } from "../resolve.js";
@@ -31,7 +32,6 @@ import {
   renderList,
   renderDetail,
   renderHelp,
-  renderError,
   renderOutput,
   type FieldDef,
 } from "../toon.js";
@@ -314,8 +314,8 @@ function viewSchema(full: boolean, includeComments: boolean): FieldDef[] {
 // ---------------------------------------------------------------------------
 
 export const MR_HELP = `usage: glab-axi mr <subcommand> [flags]
-subcommands[9]:
-  list, view <iid|url>, create, update <iid>, merge <iid>, approve <iid>, checks <iid|url>, diff <iid|url>, comment <iid>
+subcommands[10]:
+  list, view <iid|url>, create, update <iid>, merge <iid>, approve <iid>, unapprove <iid>, checks <iid|url>, diff <iid|url>, comment <iid>
 flags{list}:
   --state <opened|closed|merged|all>, --source-branch/--head <b>, --target-branch/--base <b>, --label, --author <user>, --assignee <user>, --milestone <name>, --draft, --limit <n> (default 30), --fields <a,b,c>, --json (raw JSON), --jq <expr> (jq filter over raw JSON)
 flags{view}:
@@ -328,8 +328,8 @@ flags{update}:
   --title, --body or --body-file, --label, --milestone <name>, --assignee <user>, --target-branch, --ready (clear Draft), --draft (mark Draft), --close, --reopen
 flags{merge}:
   --method <merge|squash|rebase>, --merge, --squash, --rebase, --auto (merge when the pipeline succeeds), --remove-source-branch/--delete-branch, --body or --body-file (merge commit message)
-flags{approve}:
-  (none)
+flags{approve,unapprove}:
+  (none) - GitLab models review as an approval plus discussion threads, so there is no \`mr review\`: approve/unapprove for the verdict, comment for feedback
 flags{checks}:
   (none) - prints the MR pipeline's aggregate pass/fail/running counts + verdict
 flags{comment}:
@@ -895,6 +895,51 @@ async function mrApprove(args: string[], ctx?: RepoContext): Promise<string> {
   ]);
 }
 
+async function mrUnapprove(args: string[], ctx?: RepoContext): Promise<string> {
+  const iid = takeNumber(args, "merge request");
+
+  // Idempotent, mirroring mrApprove: if the current user has no approval to
+  // withdraw, this is a no-op rather than an error.
+  const me = await glApi<Json>("user", { ctx });
+  const approvals = await glApi<Json>(mrPath(ctx, iid, "/approvals"), { ctx });
+  if (!isApprovedBy(approvals, me?.username)) {
+    return renderOutput([
+      renderDetail("merge_request", { iid, approved: "no", already: true }, [
+        field("iid"),
+        field("approved"),
+        field("already"),
+      ]),
+      renderHelp(
+        getSuggestions({
+          domain: "mr",
+          action: "unapprove",
+          id: iid,
+          repo: ctx,
+        }),
+      ),
+    ]);
+  }
+
+  await glApi<Json>(mrPath(ctx, iid, "/unapprove"), { method: "POST", ctx });
+  // GitLab's /unapprove returns no useful body, so read the approval state back
+  // rather than asserting it: report what the server says, not what we asked for.
+  const after = await glApi<Json>(mrPath(ctx, iid, "/approvals"), { ctx });
+  return renderOutput([
+    renderDetail(
+      "unapproved",
+      {
+        iid,
+        approvals: after?.approved_by?.length ?? 0,
+        approved: after?.approved === true ? "yes" : "no",
+      },
+      [field("iid"), field("approvals"), field("approved")],
+    ),
+    renderHelp(
+      getSuggestions({ domain: "mr", action: "unapprove", id: iid, repo: ctx }),
+    ),
+  ]);
+}
+
 async function mrComment(args: string[], ctx?: RepoContext): Promise<string> {
   const body = takeBody(args, { required: true });
   const iid = takeNumber(args, "merge request");
@@ -1038,6 +1083,8 @@ export async function mrCommand(
       return mrMerge(rest, ctx);
     case "approve":
       return mrApprove(rest, ctx);
+    case "unapprove":
+      return mrUnapprove(rest, ctx);
     case "checks":
       return mrChecks(rest, ctx);
     case "diff":
@@ -1050,8 +1097,6 @@ export async function mrCommand(
     case undefined:
       return MR_HELP;
     default:
-      return renderError(`Unknown mr subcommand: ${sub}`, "VALIDATION_ERROR", [
-        "Run `glab-axi mr --help` to see available subcommands",
-      ]);
+      return refuseSubcommand("mr", sub);
   }
 }

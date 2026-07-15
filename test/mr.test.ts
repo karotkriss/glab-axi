@@ -501,6 +501,35 @@ describe("mr update", () => {
   });
 });
 
+describe("mr unapprove", () => {
+  it("POSTs /unapprove then reads the approval state back from the server", async () => {
+    glApiMock
+      .mockResolvedValueOnce({ username: "alice" }) // GET /user
+      .mockResolvedValueOnce({ approved_by: [{ user: { username: "alice" } }] }) // GET /approvals
+      .mockResolvedValueOnce({}) // POST /unapprove
+      .mockResolvedValueOnce({ approved_by: [], approved: false }); // GET /approvals again
+    const out = await mrCommand(["unapprove", "42"], ctx);
+    const postCall = glApiMock.mock.calls.find(
+      (c) => c[1]?.method === "POST" && String(c[0]).endsWith("/unapprove"),
+    );
+    expect(postCall).toBeTruthy();
+    expect(out).toContain("unapproved:");
+    expect(out).toContain("approved: no");
+  });
+
+  it("is a no-op when the current user has no approval to withdraw", async () => {
+    glApiMock
+      .mockResolvedValueOnce({ username: "alice" })
+      .mockResolvedValueOnce({ approved_by: [] });
+    const out = await mrCommand(["unapprove", "42"], ctx);
+    expect(out).toContain("already: true");
+    expect(glApiMock.mock.calls.length).toBe(2);
+    expect(glApiMock.mock.calls.some((c) => c[1]?.method === "POST")).toBe(
+      false,
+    );
+  });
+});
+
 describe("mr approve / comment", () => {
   it("approve POSTs to /approve after confirming the user has not approved", async () => {
     glApiMock.mockResolvedValueOnce({ username: "alice" }); // GET /user
@@ -779,7 +808,8 @@ describe("mr router", () => {
   });
 
   it("errors on unknown subcommand", async () => {
-    const out = await mrCommand(["bogus"], ctx);
-    expect(out).toContain("Unknown mr subcommand");
+    await expect(mrCommand(["bogus"], ctx)).rejects.toThrow(
+      "Unknown mr subcommand",
+    );
   });
 });

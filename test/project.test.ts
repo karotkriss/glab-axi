@@ -641,7 +641,8 @@ describe("project router", () => {
   });
 
   it("errors on an unknown subcommand", async () => {
-    const out = await projectCommand(["bogus"], ctx);
-    expect(out).toContain("Unknown project subcommand");
+    await expect(projectCommand(["bogus"], ctx)).rejects.toThrow(
+      "Unknown project subcommand",
+    );
   });
 });

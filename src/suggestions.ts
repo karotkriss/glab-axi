@@ -179,6 +179,7 @@ const table: Entry[] = [
       c.domain === "mr" &&
       (c.action === "update" ||
         c.action === "approve" ||
+        c.action === "unapprove" ||
         c.action === "comment"),
     lines: (c) => [
       `Run \`glab-axi mr view ${c.id} --full${repoFlag(c)}\` to see updated state`,
@@ -240,6 +241,19 @@ const table: Entry[] = [
       `Run \`glab-axi ci view ${c.id}${repoFlag(c)}\` to monitor the retried pipeline`,
     ],
   },
+  {
+    match: (c) => c.domain === "ci" && c.action === "run",
+    lines: (c) => [
+      `Run \`glab-axi ci watch ${c.id}${repoFlag(c)}\` to block until the pipeline finishes`,
+      `Run \`glab-axi ci jobs ${c.id}${repoFlag(c)}\` to see its jobs`,
+    ],
+  },
+  {
+    match: (c) => c.domain === "ci" && c.action === "cancel",
+    lines: (c) => [
+      `Run \`glab-axi ci retry ${c.id}${repoFlag(c)}\` to start it again`,
+    ],
+  },
 
   // ---- project ----
   {
@@ -293,7 +307,8 @@ const table: Entry[] = [
   },
   {
     match: (c) =>
-      c.domain === "label" && (c.action === "create" || c.action === "delete"),
+      c.domain === "label" &&
+      (c.action === "create" || c.action === "edit" || c.action === "delete"),
     lines: (c) => [
       `Run \`glab-axi label list${repoFlag(c)}\` to see all labels`,
     ],
@@ -394,7 +409,8 @@ const table: Entry[] = [
     ],
   },
   {
-    match: (c) => c.domain === "release" && c.action === "create",
+    match: (c) =>
+      c.domain === "release" && (c.action === "create" || c.action === "edit"),
     lines: (c) => [
       `Run \`glab-axi release view ${c.id}${repoFlag(c)}\` to view the release`,
     ],

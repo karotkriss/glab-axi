@@ -2,6 +2,7 @@ import { glApi, requireProject, type Json } from "../gl.js";
 import type { RepoContext } from "../context.js";
 import { formatCountLine } from "../format.js";
 import { getSuggestions } from "../suggestions.js";
+import { refuseSubcommand } from "../refusals.js";
 import { takeFlag, parseLimit } from "../args.js";
 import {
   field,
@@ -9,7 +10,6 @@ import {
   renderList,
   renderDetail,
   renderHelp,
-  renderError,
   renderOutput,
   type FieldDef,
 } from "../toon.js";
@@ -99,22 +99,30 @@ async function secretSet(args: string[], ctx?: RepoContext): Promise<string> {
   const value = resolveValue(args, "secret");
   const name = requireName(args, "secret");
 
-  const { variable, created } = await upsertVariable(ctx, name, value, {
-    masked: true,
-    protected: true,
-    env,
-  });
+  const { variable, created, unchanged } = await upsertVariable(
+    ctx,
+    name,
+    value,
+    { masked: true, protected: true, env },
+  );
 
   return renderOutput([
     renderDetail(
-      created ? "created" : "updated",
+      created ? "created" : unchanged ? "secret" : "updated",
       {
         key: variable.key ?? name,
         masked: true,
         protected: variable.protected ?? true,
         env: variable.environment_scope ?? env,
+        ...(unchanged ? { already: true } : {}),
       },
-      [field("key"), boolYesNo("masked"), boolYesNo("protected"), field("env")],
+      [
+        field("key"),
+        boolYesNo("masked"),
+        boolYesNo("protected"),
+        field("env"),
+        ...(unchanged ? [field("already")] : []),
+      ],
     ),
     renderHelp(
       getSuggestions({ domain: "secret", action: "set", id: name, repo: ctx }),
@@ -151,10 +159,6 @@ export async function secretCommand(
     case undefined:
       return SECRET_HELP;
     default:
-      return renderError(
-        `Unknown secret subcommand: ${sub}`,
-        "VALIDATION_ERROR",
-        ["Run `glab-axi secret --help` to see available subcommands"],
-      );
+      return refuseSubcommand("secret", sub);
   }
 }

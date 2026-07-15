@@ -3,13 +3,13 @@ import { AxiError } from "../errors.js";
 import type { RepoContext } from "../context.js";
 import { formatCountLine } from "../format.js";
 import { getSuggestions } from "../suggestions.js";
+import { refuseSubcommand } from "../refusals.js";
 import { takeFlag, getPositional, parseLimit } from "../args.js";
 import {
   field,
   renderList,
   renderDetail,
   renderHelp,
-  renderError,
   renderOutput,
   type FieldDef,
 } from "../toon.js";
@@ -37,17 +37,21 @@ const listSchema: FieldDef[] = [
 // ---------------------------------------------------------------------------
 
 export const LABEL_HELP = `usage: glab-axi label <subcommand> [flags]
-subcommands[3]:
-  list, create, delete <name>
+subcommands[4]:
+  list, create, edit <name>, delete <name>
 flags{list}:
   --limit <n> (default 100)
 flags{create}:
   --name <text> (required), --color <hex> (required, e.g. "#ed9121"), --description <text>
+flags{edit}:
+  --name <text> (rename), --color <hex>, --description <text>; at least one is required
 flags{delete}:
   <name> (positional, required)
 examples:
   glab-axi label list
   glab-axi label create --name "bug" --color "#d9534f" --description "Something is broken"
+  glab-axi label edit bug --color "#ed9121" --description "Broken behaviour"
+  glab-axi label edit bug --name defect
   glab-axi label delete bug`;
 
 // ---------------------------------------------------------------------------
@@ -138,6 +142,58 @@ async function labelCreate(args: string[], ctx?: RepoContext): Promise<string> {
   }
 }
 
+async function labelEdit(args: string[], ctx?: RepoContext): Promise<string> {
+  const newName = takeFlag(args, "--name");
+  const color = takeFlag(args, "--color");
+  const description = takeFlag(args, "--description");
+  const name = getPositional(args, 0);
+  if (!name)
+    throw new AxiError("Missing label name", "VALIDATION_ERROR", [
+      'glab-axi label edit <name> [--name <new>] [--color "#ed9121"] [--description "..."]',
+    ]);
+  // Nothing to change is a usage error, not a wasted round trip: an empty PUT
+  // would report a confident "updated" for an edit that edited nothing.
+  if (newName === undefined && color === undefined && description === undefined)
+    throw new AxiError(
+      "Nothing to edit - pass at least one of --name, --color, or --description",
+      "VALIDATION_ERROR",
+      [
+        `glab-axi label edit ${name} --color "#ed9121"`,
+        `glab-axi label edit ${name} --name <new-name>`,
+      ],
+    );
+
+  // `--name` renames, so it maps to GitLab's `new_name` (the label's current
+  // name is the positional, addressed in the path).
+  const rawFields: string[] = [];
+  if (newName !== undefined) rawFields.push(`new_name=${newName}`);
+  if (color !== undefined) rawFields.push(`color=${color}`);
+  if (description !== undefined) rawFields.push(`description=${description}`);
+
+  // PUT-only, no GET-first. The PUT response is itself the verified state, and
+  // a repeat edit is naturally a no-op (same end state, exit 0). GET-first
+  // would also mis-handle the rename case: after `--name new`, re-running the
+  // same command finds the old name gone and would report `already_absent`,
+  // where the honest answer is GitLab's own "label not found".
+  const label = await glApi<Json>(
+    labelsPath(ctx, `/${encodeURIComponent(name)}`),
+    { method: "PUT", rawFields, ctx },
+  );
+
+  return renderOutput([
+    renderDetail(
+      "updated",
+      {
+        name: label.name ?? newName ?? name,
+        color: label.color ?? color,
+        description: label.description ?? description ?? null,
+      },
+      [field("name"), field("color"), field("description")],
+    ),
+    renderHelp(getSuggestions({ domain: "label", action: "edit", repo: ctx })),
+  ]);
+}
+
 async function labelDelete(args: string[], ctx?: RepoContext): Promise<string> {
   const name = getPositional(args, 0);
   if (!name)
@@ -198,6 +254,9 @@ export async function labelCommand(
       return labelList(rest, ctx);
     case "create":
       return labelCreate(rest, ctx);
+    case "edit":
+    case "update":
+      return labelEdit(rest, ctx);
     case "delete":
     case "rm":
       return labelDelete(rest, ctx);
@@ -207,10 +266,6 @@ export async function labelCommand(
     case undefined:
       return LABEL_HELP;
     default:
-      return renderError(
-        `Unknown label subcommand: ${sub}`,
-        "VALIDATION_ERROR",
-        ["Run `glab-axi label --help` to see available subcommands"],
-      );
+      return refuseSubcommand("label", sub);
   }
 }
