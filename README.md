@@ -185,27 +185,26 @@ Architecture notes live in [`AGENTS.md`](./AGENTS.md). The short version: every 
 
 Every notable change is recorded under `## [Unreleased]` in [`CHANGELOG.md`](./CHANGELOG.md), following the [Keep a Changelog](https://keepachangelog.com/) convention.
 
-Publishing is automated. When a **GitHub release is published**, [`.github/workflows/release.yml`](./.github/workflows/release.yml) builds, runs the test suite, and then runs `npm publish --provenance`. Nothing publishes on a plain push or tag - only on a published release, and only if the tests pass. The release's notes are sourced from the matching `CHANGELOG.md` section, which is the single source of truth for what shipped.
+Publishing is automated. When a **GitHub release is published**, [`.github/workflows/release.yml`](./.github/workflows/release.yml) builds, runs the test suite, and then runs `npm publish`. Nothing publishes on a plain push or tag - only on a published release, and only if the tests pass. The release's notes are sourced from the matching `CHANGELOG.md` section, which is the single source of truth for what shipped.
 
 The full step-by-step (move Unreleased to a new version, bump `package.json`, tag, create the release, verify the publish) lives in the `glab-axi-release` skill under [`skills/glab-axi-release/`](./skills/glab-axi-release/SKILL.md).
 
-> **One-time setup (required):** the publish job authenticates with an `NPM_TOKEN` secret holding an npm automation token with publish rights. Because the job declares `environment: npm-publish`, it can read organization secrets, repository secrets, and secrets on the `npm-publish` environment; an environment secret named `NPM_TOKEN` takes precedence over a repository secret of the same name. Either placement authenticates:
->
-> 1. **Environment secret on `npm-publish` (preferred):** GitHub -> Settings -> Environments -> the `npm-publish` environment -> Environment secrets -> Add secret, named `NPM_TOKEN`. Preferred because it scopes the token to jobs declaring that environment and lets you gate publishing behind environment protection rules.
-> 2. **Repository secret:** GitHub -> Settings -> Secrets and variables -> Actions -> New repository secret, named `NPM_TOKEN`. This works, but the token is then readable by every workflow in the repo.
->
-> If `NPM_TOKEN` is in neither place, every release run fails at the publish step.
+Auth is [npm Trusted Publishing](https://docs.npmjs.com/trusted-publishers) (OIDC). There is **no npm token** in this repo and none is needed: the registry mints a short-lived credential from the workflow's GitHub Actions identity, which is why the job requests `id-token: write`. Provenance is signed automatically, so the workflow passes no `--provenance` flag.
+
+> **One-time setup (required):** register the trusted publisher on npmjs.com under Packages -> `glab-axi` -> Settings -> Trusted publishing -> GitHub Actions, matching this repo exactly: organization `karotkriss` (no leading `@`), repository `glab-axi`, workflow filename `release.yml`, environment `npm-publish`. The match is exact - renaming the workflow file or changing the job's environment breaks publishing until the registration is updated. Full details are in the [`glab-axi-release` skill](./skills/glab-axi-release/SKILL.md).
 
 ### Testing the publish pipeline without publishing
 
-Before cutting the first real release, verify the token and the whole pipeline with a dry run. The workflow has a manual `workflow_dispatch` trigger whose `dry_run` input defaults to **true**:
+The workflow has a manual `workflow_dispatch` trigger whose `dry_run` input defaults to **true**:
 
 ```sh
 gh workflow run release.yml -f dry_run=true
 gh run watch "$(gh run list --workflow=release.yml --limit 1 --json databaseId --jq '.[0].databaseId')"
 ```
 
-(Or use the Actions tab -> Release -> Run workflow.) A dry run does the full checkout, install, build, and test, then runs `npm whoami` to confirm the token authenticates and `npm publish --dry-run` to pack and validate the tarball. **It never uploads anything.** A real publish happens only when a GitHub release is published.
+(Or use the Actions tab -> Release -> Run workflow.) A dry run does the full checkout, install, build, and test, checks that the resolved Node and npm meet the trusted-publishing floors, then runs `npm publish --dry-run` to pack and validate the tarball. **It never uploads anything.** A real publish happens only when a GitHub release is published.
+
+A dry run **does not verify auth**. `npm publish --dry-run` never contacts the registry for credentials, so it passes the same whether the trusted publisher is registered correctly or not at all. Only a real publish exercises the OIDC handshake; treat a green dry run as "it builds, tests pass, and the tarball is well-formed" and nothing more.
 
 ## License
 

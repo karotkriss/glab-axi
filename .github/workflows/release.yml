@@ -5,20 +5,27 @@ name: Release
 # release-creation time (see skills/glab-axi-release/SKILL.md); this workflow
 # only handles the npm publish.
 #
-# Auth uses NPM_TOKEN. Because this job declares `environment: npm-publish`, it
-# can read organization secrets, repository secrets, and secrets on the
-# `npm-publish` environment; an environment secret of that name takes precedence
-# over a repository secret. So NPM_TOKEN may live in either place:
-#   - Environment secret on `npm-publish` (preferred): scopes the token to jobs
-#     declaring that environment, and allows environment protection rules.
-#   - Repository secret: works, but every workflow in the repo can read it.
-# id-token: write enables --provenance for supply-chain trust.
+# Auth is npm Trusted Publishing (OIDC): there is no npm token anywhere in this
+# repo. The registry mints a short-lived credential from the GitHub Actions
+# OIDC identity, which is why `permissions: id-token: write` is required. The
+# trusted publisher is registered on npmjs.com against this repo and this
+# workflow's filename (see skills/glab-axi-release/SKILL.md), so RENAMING THIS
+# FILE BREAKS PUBLISHING until the registration is updated to match.
 #
-# workflow_dispatch runs the same pipeline in dry-run mode (the default): it
-# packs and validates the tarball and checks that the token authenticates,
-# without uploading anything. A real publish happens only on
-# `release: published`, so a dispatch with dry_run disabled is just a
-# build/test smoke run.
+# Trusted publishing requires npm >= 11.5.1 and Node >= 22.14.0. No Node 22
+# release bundles an npm that new (22.x ships npm 10.x), so this pins Node 24,
+# whose bundled npm already clears the floor with no upgrade step. The "Verify
+# toolchain" step asserts that against the real resolved binaries rather than
+# trusting the setup-node input.
+#
+# `--provenance` is deliberately absent: trusted publishing generates and signs
+# provenance by default from GitHub Actions, so the flag is redundant.
+#
+# workflow_dispatch runs a dry run (the default): install, build, test, and pack
+# plus validate the tarball. It CANNOT verify npm auth - `npm publish --dry-run`
+# never contacts the registry for credentials, so nothing short of a real
+# publish exercises the trusted-publisher handshake. A real publish happens only
+# on `release: published`.
 
 on:
   release:
@@ -26,7 +33,7 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Verify the publish pipeline without uploading to npm"
+        description: "Build, test, and validate the package tarball without uploading (does not verify npm auth)"
         type: boolean
         default: true
 
@@ -40,29 +47,32 @@ jobs:
     environment: npm-publish
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      # setup-node must be v7+: earlier majors inject a dummy npm auth token
+      # into .npmrc whenever registry-url is set, which muddies OIDC auth.
+      # Caching is off on purpose - this is the most privileged job in the repo,
+      # and a restored cache is an avoidable supply-chain input for a few
+      # seconds of install.
+      - uses: actions/setup-node@v7
         with:
-          node-version: 20
-          cache: npm
+          node-version: 24
           registry-url: "https://registry.npmjs.org"
+      - name: Verify toolchain satisfies trusted publishing floors
+        run: |
+          node_v="$(node --version | tr -d v)"
+          npm_v="$(npm --version)"
+          echo "resolved: node ${node_v} / npm ${npm_v}"
+          printf '22.14.0\n%s\n' "$node_v" | sort -VC \
+            || { echo "::error::node ${node_v} is below the 22.14.0 trusted-publishing floor"; exit 1; }
+          printf '11.5.1\n%s\n' "$npm_v" | sort -VC \
+            || { echo "::error::npm ${npm_v} is below the 11.5.1 trusted-publishing floor"; exit 1; }
       - run: npm ci
       - name: Build
         run: npm run build
       - name: Test
         run: npm test
-      # npm whoami prints the resolved npm username, never the token itself.
-      - name: Verify npm auth (dry run)
-        if: inputs.dry_run
-        run: npm whoami
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Pack and validate the tarball (dry run)
         if: inputs.dry_run
         run: npm publish --dry-run
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Publish to npm
         if: github.event_name == 'release'
-        run: npm publish --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish
