@@ -78,7 +78,7 @@ Issues and merge requests are addressed by their project-scoped **IID** (the num
 
 `glab-axi` is fully generic - it works against gitlab.com or any self-hosted GitLab. The target project is resolved in priority order:
 
-1. `-R [host/]group/project` placed **after** the command (e.g. `glab-axi mr list -R gitlab.example.com/group/project`). A first path segment containing a dot is treated as the host. Nested group paths are supported.
+1. `-R [host/]group/project` placed **after** the command (e.g. `glab-axi mr list -R gitlab.example.com/group/project`). A two-segment value is always `group/project`, even when the group name contains a dot (e.g. `firstname.lastname`, the standard username shape on LDAP/SSO instances); only a 3+-segment value can lead with a host, and then only when it's a host `glab` is already configured for or (as a last resort) contains a dot. Nested group paths are supported.
 2. The `origin` git remote of the current repository.
 
 `GITLAB_HOST` **overrides only the host** of an already-resolved project; on its own it does not select a project (there is no namespace to infer from a bare hostname).
