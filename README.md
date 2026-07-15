@@ -100,14 +100,14 @@ Every response ends with `help:` hints for logical next steps. Run `glab-axi --h
 |-----------|--------------|
 | (none)    | Dashboard of the current project |
 | `issue`   | list / view / links / create / edit / close / reopen / comment |
-| `mr`      | list / view / create / update / merge / approve / checks / diff / comment (by IID; `view`, `checks`, and `diff` also take a full MR URL) |
-| `ci`      | list / view / status / jobs / watch / log / retry (pipelines; `watch` blocks until a pipeline finishes and exits non-zero if it did not succeed) |
+| `mr`      | list / view / create / update / merge / approve / unapprove / checks / diff / comment (by IID; `view`, `checks`, and `diff` also take a full MR URL) |
+| `ci`      | list / view / status / jobs / watch / log / run / retry / cancel (pipelines; `watch` blocks until a pipeline finishes and exits non-zero if it did not succeed) |
 | `project` | view / list / create / delete (`delete` names its target and requires `--yes`) |
 | `repo`    | create-file / create-branch (writes the project's git contents) |
-| `label`   | list / create / delete |
+| `label`   | list / create / edit / delete |
 | `variable`| list / get / set / delete (plain, unmasked CI/CD variables) |
 | `secret`  | list / set / delete (masked & protected CI/CD variables; `list` never reveals values) |
-| `release` | list / view / create / delete |
+| `release` | list / view / create / edit / delete |
 | `search`  | issues / mrs / projects |
 | `api`     | raw GitLab REST passthrough with a `{project}` placeholder |
 | `setup`   | install agent SessionStart hooks |
