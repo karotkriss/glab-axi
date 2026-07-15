@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The `workflow_dispatch` dry run no longer claims to verify npm auth. It asserted that `npm whoami` proved "the token and the publish pipeline are wired correctly", but `whoami` needs no one-time password, so it passed green while the v0.2.0 publish failed with `EOTP`. `npm publish --dry-run` never contacts the registry for credentials and cannot verify auth at all, so the dry run now reports only what it actually checks: install, build, test, and a packed and validated tarball.
 - Added the CHANGELOG reference-link definitions that the release skill's step 1 requires, omitted during the 0.2.0 release prep.
+- `-R [host/]group/project` no longer rejects a namespace containing a dot. It previously decided the host by looking for a dot in the first segment, so a two-segment value like `firstname.lastname/project` (the standard username shape on LDAP/SSO GitLab instances) had its namespace mistaken for a hostname and failed to resolve. Disambiguation is now by segment count and known hosts: a two-segment value is always `group/project`; only a 3+-segment value can lead with a host, and then only when it's a host `glab` is already configured for (`src/hosts.ts`) or, as a last resort, contains a dot.
+- Every `-R`-flag suggestion in `help[]` output now emits a runnable command. `repoFlag()` previously returned `-R <target>` interpolated right after the binary name (e.g. `glab-axi -R host/group/project issue list`), which the CLI's own parser rejects since flags must come after the command. Suggestions now place `-R` at the end of the command.
 
 ## [0.2.0] - 2026-07-15
 
