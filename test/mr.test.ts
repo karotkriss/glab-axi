@@ -2,8 +2,16 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Mock the gl executor so no real glab/network/jq is touched.
 vi.mock("../src/gl.js", () => {
+  const glApi = vi.fn();
   return {
-    glApi: vi.fn(),
+    glApi,
+    // `glApiList` is `glApi` plus GitLab's X-Total header. Delegate so the path
+    // and rendering assertions below stay meaningful, and override it per-test
+    // to exercise the total. Real header parsing is covered in gl.test.ts.
+    glApiList: vi.fn(async (path: string, opts?: unknown) => ({
+      data: (await glApi(path, opts)) ?? [],
+      total: null,
+    })),
     glRaw: vi.fn(),
     glApiResult: vi.fn(),
     runJq: vi.fn(),
@@ -20,6 +28,7 @@ vi.mock("../src/gl.js", () => {
 
 import { mrCommand } from "../src/commands/mr.js";
 import { glApi, glApiResult, runJq } from "../src/gl.js";
+import { AxiError } from "../src/errors.js";
 import type { RepoContext } from "../src/context.js";
 
 const glApiMock = glApi as unknown as ReturnType<typeof vi.fn>;
@@ -811,5 +820,86 @@ describe("mr router", () => {
     await expect(mrCommand(["bogus"], ctx)).rejects.toThrow(
       "Unknown mr subcommand",
     );
+  });
+});
+
+describe("mr merge failure diagnosis (AXI clause 6 + 9)", () => {
+  /** GET-first returns a blocked MR; the merge PUT is then refused, as GitLab does. */
+  function mergeRefused(mr: Record<string, unknown>) {
+    glApiMock.mockResolvedValueOnce({
+      iid: 1,
+      state: "opened",
+      source_branch: "audit-feature",
+      target_branch: "main",
+      ...mr,
+    });
+    glApiMock.mockRejectedValueOnce(
+      new AxiError("Branch cannot be merged", "VALIDATION_ERROR"),
+    );
+  }
+
+  async function mergeError(mr: Record<string, unknown>): Promise<AxiError> {
+    mergeRefused(mr);
+    try {
+      await mrCommand(["merge", "1"], ctx);
+    } catch (err) {
+      return err as AxiError;
+    }
+    throw new Error("merge should have failed");
+  }
+
+  it("names the conflict instead of passing through 'Branch cannot be merged'", async () => {
+    const err = await mergeError({
+      detailed_merge_status: "conflict",
+      has_conflicts: true,
+    });
+    expect(err.message).toBe(
+      "Merge request !1 has conflicts with main and cannot be merged",
+    );
+    expect(err.message).not.toContain("Branch cannot be merged");
+  });
+
+  it("always leaves a resolving suggestion - clause 9 fails on an error with none", async () => {
+    const err = await mergeError({ detailed_merge_status: "conflict" });
+    expect(err.suggestions.length).toBeGreaterThan(0);
+    expect(err.suggestions.join("\n")).toContain("glab-axi mr view 1 --full");
+  });
+
+  it("suggests the command that clears a draft", async () => {
+    const err = await mergeError({ detailed_merge_status: "draft_status" });
+    expect(err.message).toContain("is marked draft");
+    expect(err.suggestions.join("\n")).toContain(
+      "glab-axi mr update 1 --ready",
+    );
+  });
+
+  it("points a pipeline block at the failing jobs", async () => {
+    const err = await mergeError({ detailed_merge_status: "ci_must_pass" });
+    expect(err.message).toContain("requires its pipeline to pass first");
+    expect(err.suggestions.join("\n")).toContain("glab-axi mr checks 1");
+  });
+
+  it("diagnoses from the coarse flags when the instance omits detailed_merge_status", async () => {
+    const err = await mergeError({ has_conflicts: true });
+    expect(err.message).toContain("has conflicts with main");
+  });
+
+  it("keeps GitLab's own message when the payload names no cause, rather than inventing one", async () => {
+    const err = await mergeError({ detailed_merge_status: "mergeable" });
+    expect(err.message).toBe("Branch cannot be merged");
+    // Undiagnosed still gets somewhere to look.
+    expect(err.suggestions.join("\n")).toContain("glab-axi mr view 1 --full");
+  });
+
+  it("carries -R forward so the suggested command targets the same project", async () => {
+    const err = await mergeError({ detailed_merge_status: "draft_status" });
+    expect(err.suggestions.join("\n")).toContain(
+      "-R gitlab.example.com/group/project",
+    );
+  });
+
+  it("costs no extra call - the diagnosis reuses the idempotency GET", async () => {
+    await mergeError({ detailed_merge_status: "conflict" });
+    expect(glApiMock).toHaveBeenCalledTimes(2);
   });
 });

@@ -141,6 +141,67 @@ export async function glApi<T = Json>(
   }
 }
 
+export interface GlListResult<T> {
+  data: T[];
+  /**
+   * `X-Total` as reported by the server, or null when it sent no such header.
+   * GitLab omits it on result sets over 10,000 rows, so null means "the server
+   * did not say" and must never be rendered as a total (least of all as 0).
+   */
+  total: number | null;
+}
+
+/** Match `X-Total` in a header block only, so a response body cannot spoof it. */
+const TOTAL_HEADER = /^x-total:[ \t]*(\d+)[ \t]*\r?$/im;
+
+/**
+ * Execute a `glab api` list request, returning the parsed rows plus GitLab's
+ * `X-Total` count of everything the query matched. `-i` prefixes the body with
+ * the response headers, which is the only place that total is exposed.
+ *
+ * Only for endpoints whose rendered rows ARE the server's result set: `X-Total`
+ * counts what the query matched, so a caller that filters or partitions the rows
+ * client-side (as `variable`/`secret` do on `masked`) would print a total that
+ * does not describe the rows beside it. Those keep plain `glApi`.
+ *
+ * Not for `paginate`: each page emits its own header block.
+ */
+export async function glApiList<T = Json>(
+  path: string,
+  opts: GlApiOptions = {},
+): Promise<GlListResult<T>> {
+  const result = await run([...buildApiArgs(path, opts), "-i"], opts.ctx);
+  if (result.stderr === "ENOENT") throw glNotInstalledError();
+  if (result.stderr === "E2BIG") throw argumentTooLargeError();
+  if (result.exitCode !== 0)
+    throw mapGlError(errorBody(result), result.exitCode);
+
+  const sep = result.stdout.match(/\r?\n\r?\n/);
+  const headers =
+    sep?.index === undefined ? "" : result.stdout.slice(0, sep.index);
+  const body =
+    sep?.index === undefined
+      ? result.stdout
+      : result.stdout.slice(sep.index + sep[0].length);
+
+  const matched = TOTAL_HEADER.exec(headers);
+  const total = matched ? Number(matched[1]) : null;
+
+  const out = body.trim();
+  if (out === "") return { data: [], total };
+  let parsed: Json;
+  try {
+    parsed = JSON.parse(out);
+  } catch {
+    throw new AxiError(
+      `Unexpected API output: ${scrubTool(out.slice(0, 200))}`,
+      "UNKNOWN",
+    );
+  }
+  // Some scopes answer `null` rather than an empty array.
+  return { data: Array.isArray(parsed) ? (parsed as T[]) : [], total };
+}
+
 /** Execute a `glab api` request and return raw (non-JSON) text. Throws on error. */
 export async function glRaw(
   path: string,

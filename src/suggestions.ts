@@ -8,6 +8,11 @@ export interface SuggestionCtx {
   isEmpty?: boolean;
   repo?: RepoContext;
   branch?: string;
+  /** Path a large payload was spilled to, when one was written. */
+  logFile?: string;
+  /** Chars rendered, and the total available, for a truncated payload. */
+  shown?: number;
+  total?: number;
 }
 
 /**
@@ -231,9 +236,20 @@ const table: Entry[] = [
   },
   {
     match: (c) => c.domain === "ci" && c.action === "log",
-    lines: (c) => [
-      `Run \`glab-axi ci log ${c.id} --full${repoFlag(c)}\` for the complete trace`,
-    ],
+    lines: (c) => {
+      const lines: string[] = [];
+      // Grepping the spill file is the cheap escape, so lead with it: `--full`
+      // pays for the whole trace in context to answer the same question.
+      if (c.logFile) {
+        lines.push(
+          `Output shows the last ${c.shown} of ${c.total} chars; full log saved to ${c.logFile} - grep it for earlier context`,
+        );
+      }
+      lines.push(
+        `Run \`glab-axi ci log ${c.id} --full${repoFlag(c)}\` for the complete trace`,
+      );
+      return lines;
+    },
   },
   {
     match: (c) => c.domain === "ci" && c.action === "retry",

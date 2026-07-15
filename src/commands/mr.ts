@@ -1,5 +1,6 @@
 import {
   glApi,
+  glApiList,
   glApiResult,
   projectId,
   requireProject,
@@ -387,9 +388,11 @@ async function mrList(args: string[], ctx?: RepoContext): Promise<string> {
     return machineOutput(path, ctx, machine);
   }
 
-  const items = (await glApi<Json[]>(path, { ctx })) ?? [];
+  const { data: items, total: totalCount } = await glApiList<Json>(path, {
+    ctx,
+  });
   const isEmpty = items.length === 0;
-  const countLine = formatCountLine({ count: items.length, limit });
+  const countLine = formatCountLine({ count: items.length, limit, totalCount });
   const schema =
     extraDefs.length > 0 ? [...listSchema, ...extraDefs] : listSchema;
 
@@ -704,6 +707,98 @@ async function waitForRebase(iid: number, ctx?: RepoContext): Promise<void> {
   );
 }
 
+/**
+ * Why GitLab refused a merge, and the command that clears it.
+ *
+ * Keyed on `detailed_merge_status`, GitLab's own field for exactly this, with
+ * the coarse flags as a fallback for instances that omit it. Returns undefined
+ * when the payload names no cause: the caller then keeps GitLab's own message
+ * rather than inventing a diagnosis it cannot support.
+ */
+function mergeBlocker(
+  mr: Json,
+  iid: number,
+  ctx?: RepoContext,
+): { reason: string; fix?: string } | undefined {
+  const target = String(mr.target_branch ?? "the target branch");
+  const r = repoFlag({ domain: "mr", action: "merge", repo: ctx });
+  const conflict = {
+    reason: `has conflicts with ${target}`,
+    fix: `Resolve the conflicts on ${mr.source_branch ?? "the source branch"} locally, push, then re-run \`glab-axi mr merge ${iid}${r}\``,
+  };
+  const draft = {
+    reason: "is marked draft",
+    fix: `Run \`glab-axi mr update ${iid} --ready${r}\` to mark it ready`,
+  };
+  const discussions = {
+    reason: "has unresolved discussion threads",
+    fix: `Run \`glab-axi mr view ${iid} --reviews${r}\` to see the unresolved threads`,
+  };
+  const byStatus: Record<string, { reason: string; fix?: string }> = {
+    conflict,
+    broken_status: conflict,
+    draft_status: draft,
+    discussions_not_resolved: discussions,
+    need_rebase: {
+      reason: `needs a rebase onto ${target}`,
+      fix: `Run \`glab-axi mr merge ${iid} --rebase${r}\` to rebase and merge in one step`,
+    },
+    not_approved: {
+      reason: "has not met its required approvals",
+      fix: `Run \`glab-axi mr view ${iid} --reviews${r}\` to see who still needs to approve`,
+    },
+    ci_must_pass: {
+      reason: "requires its pipeline to pass first",
+      fix: `Run \`glab-axi mr checks ${iid}${r}\` to see the failing jobs`,
+    },
+    ci_still_running: {
+      reason: "is waiting for its pipeline to finish",
+      fix: `Run \`glab-axi mr merge ${iid} --auto${r}\` to merge automatically once it passes`,
+    },
+    requested_changes: { reason: "has changes requested by a reviewer" },
+    blocked_status: { reason: "is blocked by another merge request" },
+    external_status_checks: { reason: "has failing external status checks" },
+    jira_association_missing: {
+      reason: "is missing a required Jira issue reference",
+    },
+  };
+
+  const detailed = byStatus[String(mr.detailed_merge_status ?? "")];
+  if (detailed) return detailed;
+  if (mr.has_conflicts === true) return conflict;
+  if (mr.draft === true || mr.work_in_progress === true) return draft;
+  if (mr.blocking_discussions_resolved === false) return discussions;
+  if (mr.merge_status === "cannot_be_merged")
+    return { reason: `cannot be merged into ${target}` };
+  return undefined;
+}
+
+/**
+ * Replace GitLab's untranslated "Branch cannot be merged" with the cause the
+ * merge request itself reported. `mr merge` GETs the MR before merging for its
+ * idempotency check, so the diagnosis costs no extra call - and an error with no
+ * resolving suggestion is the clause 9 failure, so even an unnamed cause gets a
+ * command that shows the agent where to look.
+ */
+function explainMergeFailure(
+  err: unknown,
+  mr: Json,
+  iid: number,
+  ctx?: RepoContext,
+): unknown {
+  if (!(err instanceof AxiError)) return err;
+  const view = `Run \`glab-axi mr view ${iid} --full${repoFlag({ domain: "mr", action: "merge", repo: ctx })}\` to see merge_status, conflicts, and pipeline state`;
+  const blocker = mergeBlocker(mr, iid, ctx);
+  if (!blocker) {
+    return new AxiError(err.message, err.code, [...err.suggestions, view]);
+  }
+  return new AxiError(
+    `Merge request !${iid} ${blocker.reason} and cannot be merged`,
+    err.code,
+    [blocker.fix, view].filter((l): l is string => l !== undefined),
+  );
+}
+
 async function mrMerge(args: string[], ctx?: RepoContext): Promise<string> {
   const explicitMethod = takeFlag(args, "--method");
   const shorthand = (["merge", "squash", "rebase"] as const).filter((m) =>
@@ -791,12 +886,17 @@ async function mrMerge(args: string[], ctx?: RepoContext): Promise<string> {
   if (auto) fields.push("merge_when_pipeline_succeeds=true");
   if (body !== undefined) rawFields.push(`merge_commit_message=${body}`);
 
-  const merged = await glApi<Json>(mrPath(ctx, iid, "/merge"), {
-    method: "PUT",
-    fields,
-    rawFields,
-    ctx,
-  });
+  let merged: Json;
+  try {
+    merged = await glApi<Json>(mrPath(ctx, iid, "/merge"), {
+      method: "PUT",
+      fields,
+      rawFields,
+      ctx,
+    });
+  } catch (err) {
+    throw explainMergeFailure(err, mr, iid, ctx);
+  }
   const help = renderHelp(
     getSuggestions({ domain: "mr", action: "merge", id: iid, repo: ctx }),
   );

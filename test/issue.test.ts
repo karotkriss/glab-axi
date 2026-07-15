@@ -2,8 +2,16 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Mock the gl executor so no real glab/network is touched.
 vi.mock("../src/gl.js", () => {
+  const glApi = vi.fn();
   return {
-    glApi: vi.fn(),
+    glApi,
+    // `glApiList` is `glApi` plus GitLab's X-Total header. Delegate so the path
+    // and rendering assertions below stay meaningful, and override it per-test
+    // to exercise the total. Real header parsing is covered in gl.test.ts.
+    glApiList: vi.fn(async (path: string, opts?: unknown) => ({
+      data: (await glApi(path, opts)) ?? [],
+      total: null,
+    })),
     glRaw: vi.fn(),
     glApiResult: vi.fn(),
     projectId: (ctx?: { project: string }) =>
@@ -16,7 +24,7 @@ vi.mock("../src/gl.js", () => {
 });
 
 import { issueCommand } from "../src/commands/issue.js";
-import { glApi } from "../src/gl.js";
+import { glApi, glApiList } from "../src/gl.js";
 import type { RepoContext } from "../src/context.js";
 
 const glApiMock = glApi as unknown as ReturnType<typeof vi.fn>;
@@ -315,5 +323,29 @@ describe("issue router", () => {
     await expect(issueCommand(["bogus"], ctx)).rejects.toThrow(
       "Unknown issue subcommand",
     );
+  });
+});
+
+describe("issue list total count (AXI clause 4)", () => {
+  const glApiListMock = glApiList as unknown as ReturnType<typeof vi.fn>;
+
+  it("answers 'how many are there' with the server's X-Total, not the page size", async () => {
+    glApiListMock.mockResolvedValueOnce({
+      data: [issue(), issue({ iid: 2 })],
+      total: 847,
+    });
+    const out = await issueCommand(["list", "--limit", "2"], ctx);
+    expect(out).toContain("count: 2 of 847 total");
+  });
+
+  it("falls back to the page-size phrasing when GitLab sends no total", async () => {
+    glApiListMock.mockResolvedValueOnce({
+      data: [issue(), issue({ iid: 2 })],
+      total: null,
+    });
+    const out = await issueCommand(["list", "--limit", "2"], ctx);
+    expect(out).toContain("count: 2");
+    // A total the server never sent must not be invented from the rows in hand.
+    expect(out).not.toContain("of 2 total");
   });
 });

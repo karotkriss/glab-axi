@@ -1,4 +1,10 @@
-import { glApi, glApiResult, requireProject, type Json } from "../gl.js";
+import {
+  glApi,
+  glApiList,
+  glApiResult,
+  requireProject,
+  type Json,
+} from "../gl.js";
 import { AxiError, scrubTool } from "../errors.js";
 import type { RepoContext } from "../context.js";
 import { takeBody, truncateBody } from "../body.js";
@@ -143,12 +149,12 @@ async function releaseList(args: string[], ctx?: RepoContext): Promise<string> {
   const params = new URLSearchParams();
   params.set("per_page", String(limit));
 
-  const items =
-    (await glApi<Json[]>(`${releasesPath(ctx)}?${params.toString()}`, {
-      ctx,
-    })) ?? [];
+  const { data: items, total: totalCount } = await glApiList<Json>(
+    `${releasesPath(ctx)}?${params.toString()}`,
+    { ctx },
+  );
   const isEmpty = items.length === 0;
-  const countLine = formatCountLine({ count: items.length, limit });
+  const countLine = formatCountLine({ count: items.length, limit, totalCount });
 
   if (isEmpty) {
     return renderOutput([

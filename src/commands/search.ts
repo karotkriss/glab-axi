@@ -1,4 +1,4 @@
-import { glApi, type Json } from "../gl.js";
+import { glApiList, type Json } from "../gl.js";
 import { AxiError } from "../errors.js";
 import type { RepoContext } from "../context.js";
 import { formatCountLine } from "../format.js";
@@ -116,8 +116,10 @@ async function runSearch(
   params.set("search", query);
   params.set("per_page", String(limit));
 
-  const items = await glApi<Json[]>(`search?${params.toString()}`, { ctx });
-  const results = items ?? [];
+  const { data: results, total: totalCount } = await glApiList<Json>(
+    `search?${params.toString()}`,
+    { ctx },
+  );
   const isEmpty = results.length === 0;
 
   if (isEmpty) {
@@ -127,7 +129,7 @@ async function runSearch(
     ]);
   }
   return renderOutput([
-    formatCountLine({ count: results.length, limit }),
+    formatCountLine({ count: results.length, limit, totalCount }),
     renderList(spec.label, results, spec.schema),
     renderHelp(getSuggestions({ domain: "search", action: type, repo: ctx })),
   ]);

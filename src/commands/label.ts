@@ -1,4 +1,10 @@
-import { glApi, glApiResult, requireProject, type Json } from "../gl.js";
+import {
+  glApi,
+  glApiList,
+  glApiResult,
+  requireProject,
+  type Json,
+} from "../gl.js";
 import { AxiError } from "../errors.js";
 import type { RepoContext } from "../context.js";
 import { formatCountLine } from "../format.js";
@@ -64,10 +70,10 @@ async function labelList(args: string[], ctx?: RepoContext): Promise<string> {
   const params = new URLSearchParams();
   params.set("per_page", String(limit));
 
-  const items =
-    (await glApi<Json[]>(`${labelsPath(ctx)}?${params.toString()}`, {
-      ctx,
-    })) ?? [];
+  const { data: items, total: totalCount } = await glApiList<Json>(
+    `${labelsPath(ctx)}?${params.toString()}`,
+    { ctx },
+  );
   const isEmpty = items.length === 0;
 
   if (isEmpty) {
@@ -79,7 +85,7 @@ async function labelList(args: string[], ctx?: RepoContext): Promise<string> {
     ]);
   }
   return renderOutput([
-    formatCountLine({ count: items.length, limit }),
+    formatCountLine({ count: items.length, limit, totalCount }),
     renderList("labels", items, listSchema),
     renderHelp(
       getSuggestions({ domain: "label", action: "list", isEmpty, repo: ctx }),
