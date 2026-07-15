@@ -67,7 +67,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 The tool is fully generic. Point it at any self-hosted GitLab with `GITLAB_HOST=<host>` (or `-R <host>/group/project`, or a git remote on that host). Do not hardcode any host anywhere.
 
 Driving verification against a real instance is fine; naming it in anything public is not.
-A real host, namespace, or project path must never land in tests or fixtures, examples, help text, commit messages, or PR bodies - use the placeholders this repo already establishes: `gitlab.example.com`, `dev.example.gy` (see `test/context.test.ts`), `group/project`, `your-namespace`.
+A real host, namespace, or project path must never land in tests or fixtures, examples, help text, commit messages, or PR bodies - use the placeholders this repo already establishes: `gitlab.example.com`, `dev.example.gy` (see `test/context.test.ts`), `group/project`, `my-group`.
 This is cheap to honour up front and effectively irreversible once missed: a merged commit keeps the string forever, and editing a PR body leaves the prior revision visible in GitHub's edit history.
 
 Removing such a string is the one case where the cleanup itself re-publishes it, so check the result rather than assuming.
