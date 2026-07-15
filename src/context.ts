@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { knownHosts } from "./hosts.js";
+import { glConfigGet } from "./gl.js";
 
 export interface RepoContext {
   /** Self-hosted host, when known. Undefined means "use the CLI's default host". */
@@ -73,13 +74,38 @@ function isHostSegment(segment: string): boolean {
   return segment.includes(".");
 }
 
+/**
+ * Is `host` an instance this tool can actually talk to GitLab on?
+ *
+ * GitLab is self-hostable, so a single-forge tool's trick of allowlisting one
+ * hostname is not available: any hostname could legitimately be a GitLab
+ * instance, and the URL alone cannot say. The signal that IS on the machine is
+ * the CLI's own configuration - a host it has an entry for is a GitLab instance
+ * it knows. `api_host` is read (never `token`) because it is set per host with
+ * no global fallback, so an unconfigured host reads back empty.
+ *
+ * GITLAB_HOST counts as an explicit statement of intent, which also covers a
+ * token-from-environment setup that has no config file at all (e.g. CI).
+ */
+function isKnownGitLabHost(host: string): boolean {
+  const envHost = process.env["GITLAB_HOST"]?.trim();
+  if (envHost && envHost === host) return true;
+  return glConfigGet("api_host", host) !== "";
+}
+
 function parseGitRemote(): RepoContext | undefined {
   try {
     const url = execFileSync("git", ["remote", "get-url", "origin"], {
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "ignore"],
     }).trim();
-    return parseRemoteUrl(url);
+    const ctx = parseRemoteUrl(url);
+    // A parseable remote is not a GitLab project. Without this check any
+    // forge's remote (github.com, bitbucket.org) resolves to a confident
+    // RepoContext, and every command downstream reports on a project that was
+    // never there. An unknown host means "no project resolved", not a guess.
+    if (!ctx?.host || !isKnownGitLabHost(ctx.host)) return undefined;
+    return ctx;
   } catch {
     return undefined;
   }

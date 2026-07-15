@@ -34,6 +34,10 @@ const NOT_FOUND = { stdout: "", stderr: "HTTP 404 Not Found", exitCode: 22 };
 beforeEach(() => {
   glApiMock.mockReset();
   glApiResultMock.mockReset();
+  // Default past whatever a test queues explicitly: the project is gone. The
+  // delete path reads the project back after the DELETE to see whether the
+  // instance purged it or merely scheduled it, and a purge is the plain case.
+  glApiResultMock.mockResolvedValue(NOT_FOUND);
 });
 
 function project(overrides: Record<string, unknown> = {}) {
@@ -468,6 +472,77 @@ describe("project delete", () => {
     await expect(
       projectCommand(["delete", "my-group/svc", "--yes"], ctx),
     ).rejects.toThrow("HTTP 403 Forbidden");
+  });
+
+  // The instance, not the caller, decides whether a delete purges or defers.
+  // `status` must be read back from the server rather than asserted, so these
+  // pin the outcome to what the read-back actually said.
+  it("reports scheduled, not ok, when the instance only marked the project", async () => {
+    glApiResultMock.mockResolvedValueOnce({
+      stdout: JSON.stringify(project({ id: 571 })),
+      stderr: "",
+      exitCode: 0,
+    });
+    glApiResultMock.mockResolvedValueOnce({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+    }); // DELETE
+    // Read-back by numeric id: the project survives, renamed and marked.
+    glApiResultMock.mockResolvedValueOnce({
+      stdout: JSON.stringify(
+        project({
+          id: 571,
+          path_with_namespace: "my-group/svc-deletion_scheduled-571",
+          marked_for_deletion_on: "2026-07-15",
+        }),
+      ),
+      stderr: "",
+      exitCode: 0,
+    });
+
+    const out = await projectCommand(["delete", "my-group/svc", "--yes"], ctx);
+
+    expect(out).toContain("status: scheduled");
+    expect(out).toContain("purge_after: 2026-07-15");
+    expect(out).not.toContain("status: ok");
+    // Read back by id, because the DELETE renamed the path out from under us.
+    expect(glApiResultMock.mock.calls[2][0]).toBe("projects/571");
+  });
+
+  it("reports ok when the instance really purged the project", async () => {
+    glApiResultMock.mockResolvedValueOnce({
+      stdout: JSON.stringify(project({ id: 571 })),
+      stderr: "",
+      exitCode: 0,
+    });
+    glApiResultMock.mockResolvedValueOnce({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+    }); // DELETE
+    glApiResultMock.mockResolvedValueOnce(NOT_FOUND); // read-back: really gone
+
+    const out = await projectCommand(["delete", "my-group/svc", "--yes"], ctx);
+
+    expect(out).toContain("status: ok");
+    expect(out).not.toContain("scheduled");
+  });
+
+  it("is a no-op on an already-marked project (no second DELETE)", async () => {
+    glApiResultMock.mockResolvedValueOnce({
+      stdout: JSON.stringify(
+        project({ id: 571, marked_for_deletion_on: "2026-07-15" }),
+      ),
+      stderr: "",
+      exitCode: 0,
+    });
+
+    const out = await projectCommand(["delete", "my-group/svc", "--yes"], ctx);
+
+    expect(out).toContain("status: scheduled");
+    expect(out).toContain("already: true");
+    expect(glApiResultMock.mock.calls.length).toBe(1); // GET only, no DELETE
   });
 
   it("suggests project list, without a -R naming the deleted project", async () => {

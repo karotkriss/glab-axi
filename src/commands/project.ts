@@ -362,9 +362,7 @@ async function projectDelete(
   }
 
   const path = `projects/${target.id}`;
-  const suggestions = renderHelp(
-    getSuggestions({ domain: "project", action: "delete" }),
-  );
+  const hints = getSuggestions({ domain: "project", action: "delete" });
 
   // Idempotent: GET first so a repeat delete is a definitive no-op rather than
   // an error (mirrors `release delete`).
@@ -378,13 +376,27 @@ async function projectDelete(
           { project: target.label, already_absent: true },
           [field("project"), field("already_absent")],
         ),
-        suggestions,
+        renderHelp(hints),
       ]);
     }
     throw new AxiError(
       scrubTool(existing.stderr || existing.stdout) ||
         "Failed to look up project",
       "UNKNOWN",
+    );
+  }
+
+  const before = parseProject(existing.stdout);
+
+  // Where the instance defers deletion, a second DELETE is rejected with a 400
+  // ("already marked for deletion"). It is already in the target state, so
+  // report that instead of erroring.
+  if (before?.marked_for_deletion_on) {
+    return renderScheduled(
+      target.label,
+      before.marked_for_deletion_on,
+      true,
+      hints,
     );
   }
 
@@ -396,12 +408,68 @@ async function projectDelete(
     );
   }
 
+  // Report what the server did, not what was asked of it. GitLab's DELETE
+  // answers "202 Accepted" either way, so the outcome has to be read back:
+  // where delayed deletion is enabled the project still exists, renamed to
+  // <path>-deletion_scheduled-<id>. That rename is why the read-back goes by
+  // numeric id - the path we deleted by now 404s even though the project lives.
+  const markedOn =
+    before?.id === undefined
+      ? undefined
+      : await readMarkedForDeletion(`projects/${before.id}`, target.ctx);
+  if (markedOn) return renderScheduled(target.label, markedOn, false, hints);
+
   return renderOutput([
     renderDetail("deleted", { project: target.label, status: "ok" }, [
       field("project"),
       field("status"),
     ]),
-    suggestions,
+    renderHelp(hints),
+  ]);
+}
+
+/** Parse a project response body, tolerating a non-JSON payload. */
+function parseProject(body: string): Json | undefined {
+  try {
+    return JSON.parse(body) as Json;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The project's `marked_for_deletion_on`, or undefined if it is gone. */
+async function readMarkedForDeletion(
+  path: string,
+  ctx?: RepoContext,
+): Promise<string | undefined> {
+  const result = await glApiResult(path, { ctx });
+  if (result.exitCode !== 0) return undefined;
+  return parseProject(result.stdout)?.marked_for_deletion_on ?? undefined;
+}
+
+/** Render a deletion the instance deferred rather than performed. */
+function renderScheduled(
+  label: string,
+  purgeAfter: string,
+  already: boolean,
+  hints: string[],
+): string {
+  const detail: Json = {
+    project: label,
+    status: "scheduled",
+    purge_after: purgeAfter,
+  };
+  const schema = [field("project"), field("status"), field("purge_after")];
+  if (already) {
+    detail.already = true;
+    schema.push(field("already"));
+  }
+  return renderOutput([
+    renderDetail("deleted", detail, schema),
+    renderHelp([
+      "This instance defers project deletion - the project still exists, marked for deletion, and is purged on the instance's own retention schedule",
+      ...hints,
+    ]),
   ]);
 }
 
