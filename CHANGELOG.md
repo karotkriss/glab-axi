@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Every `-R`-flag suggestion in `help[]` output now emits a runnable command. `repoFlag()` previously returned `-R <target>` interpolated right after the binary name (e.g. `glab-axi -R host/group/project issue list`), which the CLI's own parser rejects since flags must come after the command. Suggestions now place `-R` at the end of the command.
 - An unknown or refused subcommand exited 0; it now exits 2, so a mistyped verb no longer reads as success to a caller checking the exit code.
 - `variable set` / `secret set` reported `updated` for a write that changed nothing. An unchanged value now skips the write and reports `already: true`.
+- Reading the `glab` config could print your GitLab API token to stderr. The yaml parser emitted a warning that quotes its offending source line - the line holding the token - for a shape it could not resolve, and a warning is not a throw, so the existing try/catch never caught it; this fired on nearly every invocation that resolved a host, so anywhere stderr was captured (CI logs, pasted command output) the token went with it. The parser now runs with yaml's `logLevel: "error"`, which silences the warning channel itself rather than the one construct that triggered it. No published release was affected: neither the 0.1.0 nor 0.2.0 npm tarball contains the affected code, which landed on `main` after 0.2.0 was published.
 
 ## [0.2.0] - 2026-07-15
 
