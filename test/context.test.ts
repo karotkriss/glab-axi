@@ -31,7 +31,7 @@ function configuredHosts(...hosts: string[]) {
 describe("parseRepoArg", () => {
   beforeEach(() => {
     vi.resetAllMocks();
-    configured("gitlab.com", "dev.egov.gy");
+    configured("gitlab.com", "dev.example.gy");
   });
 
   it("resolves a dotted namespace as group/project, not as a host", () => {
@@ -45,18 +45,18 @@ describe("parseRepoArg", () => {
   });
 
   it("never reads a host out of a two-segment value", () => {
-    expect(parseRepoArg("dev.egov.gy/my-project", "flag")).toEqual({
+    expect(parseRepoArg("dev.example.gy/my-project", "flag")).toEqual({
       host: undefined,
-      project: "dev.egov.gy/my-project",
+      project: "dev.example.gy/my-project",
       source: "flag",
     });
   });
 
   it("leads with a host when the first segment is a known host", () => {
     expect(
-      parseRepoArg("dev.egov.gy/christopher.mckay/my-project", "flag"),
+      parseRepoArg("dev.example.gy/christopher.mckay/my-project", "flag"),
     ).toEqual({
-      host: "dev.egov.gy",
+      host: "dev.example.gy",
       project: "christopher.mckay/my-project",
       source: "flag",
     });
@@ -87,8 +87,10 @@ describe("parseRepoArg", () => {
       project: "group/subgroup/project",
       source: "flag",
     });
-    expect(parseRepoArg("dev.egov.gy/group/subgroup/project", "flag")).toEqual({
-      host: "dev.egov.gy",
+    expect(
+      parseRepoArg("dev.example.gy/group/subgroup/project", "flag"),
+    ).toEqual({
+      host: "dev.example.gy",
       project: "group/subgroup/project",
       source: "flag",
     });
@@ -111,7 +113,7 @@ describe("parseRepoArg", () => {
 
   it("rejects a value with no namespace", () => {
     expect(parseRepoArg("project", "flag")).toBeUndefined();
-    expect(parseRepoArg("dev.egov.gy", "flag")).toBeUndefined();
+    expect(parseRepoArg("dev.example.gy", "flag")).toBeUndefined();
     expect(parseRepoArg("", "flag")).toBeUndefined();
   });
 
