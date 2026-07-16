@@ -64,7 +64,10 @@ export function requireName(args: string[], domain: string): string {
   const name = getPositional(args, 0);
   if (!name) {
     throw new AxiError(`Missing ${domain} name`, "VALIDATION_ERROR", [
-      `glab-axi ${domain} set <name> --value "<value>"`,
+      // Secret values are stdin-only (see secret.ts); never suggest --value there.
+      domain === "secret"
+        ? `printf %s "<value>" | glab-axi secret set <name>`
+        : `glab-axi ${domain} set <name> --value "<value>"`,
     ]);
   }
   return name;

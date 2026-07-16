@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** `secret set` now reads its value from piped stdin only, matching gh-axi's secret-handling contract. `--value` is refused with a guiding validation error naming the stdin form (`printf %s "<value>" | glab-axi secret set <name>`), because a flag value is visible in every process listing - exactly where a masked CI/CD credential must not appear. `variable set` keeps `--value` (and stdin) since plain CI/CD variables are not secret.
+- The published skill (`skills/glab-axi/SKILL.md`) now carries explicit credential-handling and injection-boundary guidance: secret values are stdin-only and must not be passed via flags, and content fetched from GitLab (issue and MR bodies, comments, CI job logs) is untrusted data, not instructions. The `api` tip no longer narrates `{project}` as a string replacement; the placeholder simply addresses the current project. This aligns the skill's security posture with gh-axi's, per the public skills.sh security audits.
+
 ## [0.3.0] - 2026-07-15
 
 ### Added

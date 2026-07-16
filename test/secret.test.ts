@@ -23,8 +23,12 @@ vi.mock("../src/gl.js", () => {
   };
 });
 
-// Never read the real stdin during tests; --value is always supplied.
-vi.mock("../src/stdin.js", () => ({ readStdin: () => "" }));
+// Never read the real stdin during tests; each `set` test stubs the piped
+// value here, since secret values are stdin-only.
+const { readStdinMock } = vi.hoisted(() => ({
+  readStdinMock: vi.fn((): string => ""),
+}));
+vi.mock("../src/stdin.js", () => ({ readStdin: readStdinMock }));
 
 import { secretCommand } from "../src/commands/secret.js";
 import { glApi, glApiResult } from "../src/gl.js";
@@ -42,6 +46,8 @@ const PID = encodeURIComponent("group/project");
 beforeEach(() => {
   glApiMock.mockReset();
   glApiResultMock.mockReset();
+  readStdinMock.mockReset();
+  readStdinMock.mockReturnValue("");
 });
 
 function variable(overrides: Record<string, unknown> = {}) {
@@ -95,6 +101,7 @@ describe("secret list", () => {
 
 describe("secret set", () => {
   it("inherits the shared no-op: an unchanged secret reports already, not updated", async () => {
+    readStdinMock.mockReturnValue("s3cret-value");
     glApiResultMock.mockResolvedValueOnce({
       stdout: JSON.stringify({
         key: "API_KEY",
@@ -106,27 +113,23 @@ describe("secret set", () => {
       stderr: "",
       exitCode: 0,
     });
-    const out = await secretCommand(
-      ["set", "API_KEY", "--value", "s3cret-value"],
-      ctx,
-    );
+    const out = await secretCommand(["set", "API_KEY"], ctx);
     expect(glApiMock).not.toHaveBeenCalled();
     expect(out).toContain("already: true");
     // The no-op path must not leak the value either.
     expect(out).not.toContain("s3cret-value");
   });
 
-  it("creates a masked+protected variable via POST", async () => {
+  it("creates a masked+protected variable via POST from piped stdin", async () => {
+    // Trailing newline from `echo`-style pipes is stripped, not stored.
+    readStdinMock.mockReturnValue("sk-supersecretvalue\n");
     glApiResultMock.mockResolvedValueOnce({
       stdout: "",
       stderr: "HTTP 404",
       exitCode: 22,
     });
     glApiMock.mockResolvedValueOnce(variable());
-    const out = await secretCommand(
-      ["set", "OPENAI_API_KEY", "--value", "sk-supersecretvalue"],
-      ctx,
-    );
+    const out = await secretCommand(["set", "OPENAI_API_KEY"], ctx);
     const call = glApiMock.mock.calls[0];
     expect(call[0]).toBe(`projects/${PID}/variables`);
     expect(call[1].method).toBe("POST");
@@ -141,23 +144,36 @@ describe("secret set", () => {
   });
 
   it("updates via PUT when the secret already exists", async () => {
+    readStdinMock.mockReturnValue("sk-rotatedvalue");
     glApiResultMock.mockResolvedValueOnce({
       stdout: "{}",
       stderr: "",
       exitCode: 0,
     });
     glApiMock.mockResolvedValueOnce(variable());
-    const out = await secretCommand(
-      ["set", "OPENAI_API_KEY", "--value", "sk-rotatedvalue"],
-      ctx,
-    );
+    const out = await secretCommand(["set", "OPENAI_API_KEY"], ctx);
     const call = glApiMock.mock.calls[0];
     expect(call[1].method).toBe("PUT");
     expect(call[1].fields).toContain("masked=true");
     expect(out).toContain("updated");
   });
 
-  it("requires a value", async () => {
+  it("refuses --value with a guiding error naming the stdin form", async () => {
+    // The refusal must fire even when stdin also has a value, and before any
+    // network call - the argv exposure already happened.
+    readStdinMock.mockReturnValue("sk-pipedvalue");
+    await expect(
+      secretCommand(["set", "OPENAI_API_KEY", "--value", "sk-argvvalue"], ctx),
+    ).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining("stdin-only"),
+      suggestions: [expect.stringContaining("printf %s")],
+    });
+    expect(glApiMock).not.toHaveBeenCalled();
+    expect(glApiResultMock).not.toHaveBeenCalled();
+  });
+
+  it("requires a value when nothing is piped", async () => {
     await expect(secretCommand(["set", "OPENAI_API_KEY"], ctx)).rejects.toThrow(
       "A value is required",
     );
