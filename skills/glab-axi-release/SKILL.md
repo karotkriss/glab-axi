@@ -123,7 +123,7 @@ in `CHANGELOG.md`. Run from a clean checkout of the default branch.
      grab && /^## \[/ { exit }
      grab && /^\[[^]]+\]:/ { exit }
      grab { print }
-   ' CHANGELOG.md | gh release create "v$VERSION" --title "v$VERSION" --notes-file -
+   ' CHANGELOG.md | gh release create "v$VERSION" --title "glab-axi: v$VERSION" --notes-file -
    ```
 
    The `awk` prints exactly the lines between `## [X.Y.Z]` and the next version
