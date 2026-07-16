@@ -1,9 +1,11 @@
 import { glApi, requireProject, type Json } from "../gl.js";
+import { AxiError } from "../errors.js";
 import type { RepoContext } from "../context.js";
 import { formatCountLine } from "../format.js";
 import { getSuggestions } from "../suggestions.js";
 import { refuseSubcommand } from "../refusals.js";
 import { takeFlag, parseLimit } from "../args.js";
+import { readStdin } from "../stdin.js";
 import {
   field,
   boolYesNo,
@@ -15,7 +17,6 @@ import {
 } from "../toon.js";
 import {
   variablesPath,
-  resolveValue,
   requireName,
   upsertVariable,
   deleteVariable,
@@ -43,13 +44,15 @@ flags{list}:
 flags{set,delete,rm}:
   --env <scope> (environment scope, default "*")
 flags{set}:
-  --value <value> (required; reads from piped stdin if omitted)
+  --value (refused: secret values are stdin-only - pipe the value instead)
 notes:
+  \`set\` reads the value from piped stdin only; \`--value\` is refused because
+  a flag value is visible in the process argv (use \`variable set\` for
+  non-secret values).
   GitLab requires masked values to meet its masking rules (>= 8 chars, no
   whitespace, base64 alphabet); a value that fails is rejected as a validation error.
 examples:
   glab-axi secret list
-  glab-axi secret set OPENAI_API_KEY --value "sk-..."
   printf %s "sk-..." | glab-axi secret set OPENAI_API_KEY
   glab-axi secret delete OPENAI_API_KEY`;
 
@@ -95,10 +98,36 @@ async function secretList(args: string[], ctx?: RepoContext): Promise<string> {
   ]);
 }
 
+/**
+ * Secret values are stdin-only: a `--value` on argv is visible to every
+ * process listing (`ps`, `/proc/<pid>/cmdline`), which is exactly where a
+ * masked CI/CD credential must not appear. The flag stays declared in
+ * SECRET_HELP so this guiding refusal fires instead of a generic
+ * unknown-flag error. Plain variables keep `--value` in variable.ts.
+ */
+const STDIN_ONLY_SUGGESTION = `Pipe the value: \`printf %s "<value>" | glab-axi secret set <name>\``;
+
+function resolveSecretValue(args: string[]): string {
+  if (takeFlag(args, "--value") !== undefined) {
+    throw new AxiError(
+      "Secret values are stdin-only; --value would expose the value in the process argv",
+      "VALIDATION_ERROR",
+      [STDIN_ONLY_SUGGESTION],
+    );
+  }
+  const value = readStdin().replace(/\r?\n$/, "");
+  if (value === "") {
+    throw new AxiError("A value is required", "VALIDATION_ERROR", [
+      STDIN_ONLY_SUGGESTION,
+    ]);
+  }
+  return value;
+}
+
 async function secretSet(args: string[], ctx?: RepoContext): Promise<string> {
   requireProject(ctx);
   const env = takeFlag(args, "--env") ?? "*";
-  const value = resolveValue(args, "secret");
+  const value = resolveSecretValue(args);
   const name = requireName(args, "secret");
 
   const { variable, created, unchanged } = await upsertVariable(
