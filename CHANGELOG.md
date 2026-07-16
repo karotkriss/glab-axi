@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-16
+
 ### Changed
 
 - **Breaking:** `secret set` now reads its value from piped stdin only, matching gh-axi's secret-handling contract. `--value` is refused with a guiding validation error naming the stdin form (`printf %s "<value>" | glab-axi secret set <name>`), because a flag value is visible in every process listing - exactly where a masked CI/CD credential must not appear. `variable set` keeps `--value` (and stdin) since plain CI/CD variables are not secret.
@@ -112,7 +114,8 @@ First published release.
 - Installable Agent Skill generated from the CLI's own help, with a CI freshness check.
 - Generic host/project targeting via `-R [host/]group/project`, the `origin` git remote, or `GITLAB_HOST` (host-only override).
 
-[Unreleased]: https://github.com/karotkriss/glab-axi/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/karotkriss/glab-axi/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/karotkriss/glab-axi/releases/tag/v0.4.0
 [0.3.0]: https://github.com/karotkriss/glab-axi/releases/tag/v0.3.0
 [0.2.0]: https://github.com/karotkriss/glab-axi/releases/tag/v0.2.0
 [0.1.0]: https://github.com/karotkriss/glab-axi/releases/tag/v0.1.0

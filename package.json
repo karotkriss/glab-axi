@@ -1,6 +1,6 @@
 {
   "name": "glab-axi",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "AXI-compliant glab CLI wrapper for GitLab — token-efficient TOON output, contextual suggestions, idempotent mutations",
   "type": "module",
   "repository": {
