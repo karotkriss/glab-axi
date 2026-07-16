@@ -379,14 +379,14 @@ const table: Entry[] = [
   {
     match: (c) => c.domain === "secret" && c.action === "list" && !c.isEmpty,
     lines: (c) => [
-      `Run \`glab-axi secret set <name> --value "..."${repoFlag(c)}\` to set a masked secret`,
+      `Run \`printf %s "<value>" | glab-axi secret set <name>${repoFlag(c)}\` to set a masked secret`,
     ],
   },
   {
     match: (c) =>
       c.domain === "secret" && c.action === "list" && c.isEmpty === true,
     lines: (c) => [
-      `Run \`glab-axi secret set <name> --value "..."${repoFlag(c)}\` to create a masked secret`,
+      `Run \`printf %s "<value>" | glab-axi secret set <name>${repoFlag(c)}\` to create a masked secret`,
       `Run \`glab-axi variable list${repoFlag(c)}\` to see plain CI/CD variables`,
     ],
   },
