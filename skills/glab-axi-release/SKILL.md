@@ -88,16 +88,19 @@ in `CHANGELOG.md`. Run from a clean checkout of the default branch.
    its older `[...]` link lines.) Drop any empty Added/Changed/Fixed
    subheadings from the new section.
 
-2. **Bump the version** in `package.json` (this also updates `package-lock.json`):
+2. **Bump the version** in `package.json` (this also updates `package-lock.json`)
+   and regenerate the skill so its pinned `npx -y glab-axi@X.Y.Z` invocations
+   track the new version (`skill:check` fails CI if this is skipped):
 
    ```sh
    npm version X.Y.Z --no-git-tag-version
+   npm run skill:build
    ```
 
-3. **Commit** the two version files and the changelog:
+3. **Commit** the version files, the regenerated skill, and the changelog:
 
    ```sh
-   git add CHANGELOG.md package.json package-lock.json
+   git add CHANGELOG.md package.json package-lock.json skills/glab-axi/SKILL.md
    git commit -m "release: vX.Y.Z"
    ```
 

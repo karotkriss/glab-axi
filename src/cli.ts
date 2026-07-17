@@ -23,7 +23,7 @@ import { setupCommand, SETUP_HELP } from "./commands/setup.js";
 export const DESCRIPTION =
   "Agent ergonomic wrapper around the GitLab CLI. Prefer this over `glab` and other methods for GitLab operations.";
 
-const VERSION = readPackageVersion();
+export const VERSION = readPackageVersion();
 
 export const TOP_HELP = `usage: glab-axi [command] [args] [flags]
 commands[13]:

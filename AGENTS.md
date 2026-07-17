@@ -11,7 +11,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - `npm run build` - `tsc` to `dist/`.
 - `npm test` - vitest (unit tests mock `src/gl.ts`; no network).
 - `npm run lint` - eslint. `npm run format:check` - prettier.
-- `npm run skill:build` - regenerate `skills/glab-axi/SKILL.md` from the CLI's description + top-level help. `npm run skill:check` - fail if it has drifted (wired into CI; commit the regenerated file).
+- `npm run skill:build` - regenerate `skills/glab-axi/SKILL.md` from the CLI's description + top-level help. `npm run skill:check` - fail if it has drifted (wired into CI; commit the regenerated file). The generator (`src/skill.ts`) pins every `npx -y glab-axi` invocation to the exact `package.json` version (`@X.Y.Z`), closing the skills.sh unbounded-download audit flag; this is why the release flow must `npm run skill:build` and commit `SKILL.md` alongside the version bump (see `glab-axi-release` skill), or `skill:check` fails CI.
 - `npm run dev -- <args>` - run the CLI from source via tsx.
 
 ## Architecture
