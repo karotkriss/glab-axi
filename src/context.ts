@@ -1,37 +1,77 @@
 import { execFileSync } from "node:child_process";
 import { knownHosts } from "./hosts.js";
 import { glConfigGet } from "./gl.js";
+import { AxiError } from "./errors.js";
 
 export interface RepoContext {
   /** Self-hosted host, when known. Undefined means "use the CLI's default host". */
   host?: string;
-  /** Full namespace path: "group/project" or "group/subgroup/project". */
-  project: string;
+  /**
+   * Full namespace path: "group/project" or "group/subgroup/project".
+   * Undefined for a host-only context (`--host <host>`), where the host is
+   * known but no project is - host-level ops (search, project list, api user).
+   */
+  project?: string;
   /** How the project was resolved. */
   source: "flag" | "git";
 }
 
 /**
- * Resolve the target project.
+ * Resolve the target context.
  *
  * Priority for the PROJECT path: --repo flag > git remote origin.
- * GITLAB_HOST only OVERRIDES the host of an already-resolved project; by
- * itself it does NOT resolve a project (there is no namespace to infer from
- * a bare hostname).
+ * The HOST is layered on top: `--host` (explicit host selector) overrides
+ * everything, then GITLAB_HOST overrides an already-resolved project's host.
+ * `--host` alone yields a host-only context (project undefined) so host-level
+ * operations can target a self-hosted instance without the GITLAB_HOST env
+ * workaround; `-R` stays strictly `[host/]group/project` and a host-only `-R`
+ * errors loudly rather than silently hitting the default host.
  */
-export function resolveRepo(flagValue?: string): RepoContext | undefined {
+export function resolveRepo(
+  flagValue?: string,
+  hostFlag?: string,
+): RepoContext | undefined {
   let ctx: RepoContext | undefined;
   if (flagValue) {
     ctx = parseRepoArg(flagValue, "flag");
+    // A `-R` value that names no project is not silently dropped (which used to
+    // fall through to the CLI's default host). It errors, pointing at --host.
+    if (!ctx) throw badRepoArgError(flagValue);
   } else {
     ctx = parseGitRemote();
   }
-  if (!ctx) return undefined;
-  const envHost = process.env["GITLAB_HOST"];
-  if (envHost && envHost.trim()) {
-    ctx.host = envHost.trim();
+  const envHost = process.env["GITLAB_HOST"]?.trim();
+  if (ctx && envHost) ctx.host = envHost;
+  const host = hostFlag?.trim();
+  if (host) {
+    // Explicit --host wins over the env, and stands alone as a host-only
+    // context when nothing else resolved a project.
+    if (ctx) ctx.host = host;
+    else ctx = { host, source: "flag" };
   }
   return ctx;
+}
+
+/** A `-R` value that failed to parse as `[host/]group/project`. */
+function badRepoArgError(value: string): AxiError {
+  if (isHostSegment(value)) {
+    return new AxiError(
+      `-R ${value} names a host but no project`,
+      "VALIDATION_ERROR",
+      [
+        `For host-level operations (search, project list, api user) use --host ${value}`,
+        `To target a project pass -R ${value}/group/project`,
+      ],
+    );
+  }
+  return new AxiError(
+    `-R ${value} must be of the form [host/]group/project`,
+    "VALIDATION_ERROR",
+    [
+      `Pass a namespace path, e.g. -R group/project or -R host/group/project`,
+      `For host-level operations use --host <host>`,
+    ],
+  );
 }
 
 /**
@@ -46,7 +86,7 @@ export function resolveRepo(flagValue?: string): RepoContext | undefined {
 export function parseRepoArg(
   value: string,
   source: "flag" | "git",
-): RepoContext | undefined {
+): (RepoContext & { project: string }) | undefined {
   const parts = value.split("/").filter(Boolean);
   if (parts.length < 2) return undefined;
   let host: string | undefined;

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- New global `--host <host>` flag (placed after the command, like `-R`) for host-level operations - `search projects`, `project list`, `api user` - against a self-hosted instance, without the previously-undocumented `GITLAB_HOST` env workaround. It is the flag form of `GITLAB_HOST` and takes precedence over it. In-repo git-remote host derivation and `-R [host/]group/project` are unchanged.
+
+### Fixed
+
+- A host-only `-R <host>` (e.g. `-R gitlab.example.com`, no `group/project`) no longer silently falls through to the CLI's default host and returns wrong-instance data. It now errors with a `VALIDATION_ERROR` pointing at `--host` for host-level ops, or at `-R host/group/project` to target a project - closing the AXI "a dropped flag is worse than an error" hole. A bare non-host word (a mistyped project) errors with `[host/]group/project` guidance.
+
 ### Changed
 
 - The published skill (`skills/glab-axi/SKILL.md`) now pins every `npx` invocation to the exact released version (`npx -y glab-axi@X.Y.Z`) instead of the unbounded `npx -y glab-axi`, closing the skills.sh security audit's REMOTE_CODE_EXECUTION / EXTERNAL_DOWNLOADS flag (Trust Hub + Socket, both MEDIUM). The pin is generated from `package.json` (the skill builder rewrites `npx -y glab-axi` to include the current version), so `npm run skill:build` tracks each release and `skill:check` fails CI if the committed skill drifts; the release flow regenerates and commits `SKILL.md` alongside the version bump.

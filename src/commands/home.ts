@@ -64,7 +64,7 @@ export async function homeCommand(
   const blocks: string[] = [];
   const hints: string[] = [];
 
-  if (ctx) {
+  if (ctx?.project) {
     const pid = projectId(ctx);
     const [issues, mrs] = await Promise.allSettled([
       glApi<Json[]>(

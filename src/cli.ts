@@ -28,16 +28,20 @@ export const VERSION = readPackageVersion();
 export const TOP_HELP = `usage: glab-axi [command] [args] [flags]
 commands[13]:
   (none)=dashboard, issue, mr, ci, project, repo, label, variable, secret, release, search, api, setup
-flags[3]:
-  -R/--repo <[host/]group/project> (after command), accepts space or equals form, --help, -v/-V/--version
+flags[4]:
+  -R/--repo <[host/]group/project> (after command), accepts space or equals form
+  --host <host> (after command) targets a self-hosted instance for host-level ops (search, project list, api user) - the flag form of GITLAB_HOST
+  --help, -v/-V/--version
 notes:
   IID-addressed: issues and merge requests use their project-scoped IID (the number in the URL).
-  GITLAB_HOST overrides only the host; it does not by itself select a project.
+  --host and GITLAB_HOST select only the host; -R selects a project (and may carry its host). A host-only -R errors - use --host.
 examples:
   glab-axi
   glab-axi issue list --state opened
   glab-axi mr view 42 --full
   glab-axi mr list -R gitlab.example.com/group/project
+  glab-axi search projects backend --host gitlab.example.com
+  glab-axi api user --host gitlab.example.com
   glab-axi ci status --branch main
   glab-axi setup hooks
 `;
@@ -100,8 +104,10 @@ export async function main(
       home: withRepoContext(undefined, homeCommand),
       commands: COMMANDS,
       getCommandHelp: (command) => COMMAND_HELP[command],
-      resolveContext: ({ args }) =>
-        resolveRepo(parseRepoContextArgs(args).repoFlag),
+      resolveContext: ({ args }) => {
+        const parsed = parseRepoContextArgs(args);
+        return resolveRepo(parsed.repoFlag, parsed.hostFlag);
+      },
     });
   } catch (error) {
     // runAxiCli only wraps the command handler in try/catch, not
@@ -159,13 +165,19 @@ function withRepoContext(
   };
 }
 
-/** Extract and strip the `-R`/`--repo` flag (in space or equals form). */
+/**
+ * Extract and strip the `-R`/`--repo` and `--host` flags (space or equals form).
+ * Both are global selectors handled here so every command routes through one
+ * place; stripping them here is also why they never reach `rejectUnknownFlags`.
+ */
 export function parseRepoContextArgs(args: string[]): {
   repoFlag: string | undefined;
+  hostFlag: string | undefined;
   strippedArgs: string[];
 } {
   const stripped: string[] = [];
   let repoFlag: string | undefined;
+  let hostFlag: string | undefined;
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
     if ((arg === "-R" || arg === "--repo") && index + 1 < args.length) {
@@ -181,7 +193,16 @@ export function parseRepoContextArgs(args: string[]): {
       repoFlag = arg.slice("--repo=".length);
       continue;
     }
+    if (arg === "--host" && index + 1 < args.length) {
+      hostFlag = args[index + 1];
+      index++;
+      continue;
+    }
+    if (arg.startsWith("--host=") && arg.length > "--host=".length) {
+      hostFlag = arg.slice("--host=".length);
+      continue;
+    }
     stripped.push(arg);
   }
-  return { repoFlag, strippedArgs: stripped };
+  return { repoFlag, hostFlag, strippedArgs: stripped };
 }
