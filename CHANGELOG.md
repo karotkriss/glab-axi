@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-19
+
 ### Added
 
 - New global `--host <host>` flag (placed after the command, like `-R`) for host-level operations - `search projects`, `project list`, `api user` - against a self-hosted instance, without the previously-undocumented `GITLAB_HOST` env workaround. It is the flag form of `GITLAB_HOST` and takes precedence over it. In-repo git-remote host derivation and `-R [host/]group/project` are unchanged.
@@ -126,7 +128,8 @@ First published release.
 - Installable Agent Skill generated from the CLI's own help, with a CI freshness check.
 - Generic host/project targeting via `-R [host/]group/project`, the `origin` git remote, or `GITLAB_HOST` (host-only override).
 
-[Unreleased]: https://github.com/karotkriss/glab-axi/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/karotkriss/glab-axi/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/karotkriss/glab-axi/releases/tag/v0.5.0
 [0.4.0]: https://github.com/karotkriss/glab-axi/releases/tag/v0.4.0
 [0.3.0]: https://github.com/karotkriss/glab-axi/releases/tag/v0.3.0
 [0.2.0]: https://github.com/karotkriss/glab-axi/releases/tag/v0.2.0
