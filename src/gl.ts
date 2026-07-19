@@ -33,13 +33,13 @@ const MAX_BUFFER_BYTES = 20 * 1024 * 1024; // 20 MB
 
 /** URL-encode a project's full namespace path for use as a REST :id. */
 export function projectId(ctx?: RepoContext): string {
-  if (!ctx) return "{project}";
+  if (!ctx?.project) return "{project}";
   return encodeURIComponent(ctx.project);
 }
 
 /** Return the encoded project id, or throw an actionable error if unresolved. */
 export function requireProject(ctx?: RepoContext): string {
-  if (!ctx) {
+  if (!ctx?.project) {
     throw new AxiError(
       "Could not determine the target GitLab project",
       "VALIDATION_ERROR",

@@ -214,6 +214,66 @@ describe("resolveRepo from a git remote", () => {
   });
 });
 
+describe("resolveRepo with --host (Option C)", () => {
+  beforeEach(() => {
+    execMock.mockReset();
+    configMock.mockReset();
+    configured("gitlab.com", "dev.example.gy");
+    // Default: no git remote, so a bare --host stands alone.
+    execMock.mockImplementation(() => {
+      throw new Error("no origin");
+    });
+    delete process.env["GITLAB_HOST"];
+  });
+
+  afterEach(() => {
+    delete process.env["GITLAB_HOST"];
+  });
+
+  it("yields a host-only context (no project) from --host alone", () => {
+    expect(resolveRepo(undefined, "dev.example.gy")).toEqual({
+      host: "dev.example.gy",
+      source: "flag",
+    });
+  });
+
+  it("layers --host onto a -R project target", () => {
+    expect(resolveRepo("group/project", "dev.example.gy")).toEqual({
+      host: "dev.example.gy",
+      project: "group/project",
+      source: "flag",
+    });
+  });
+
+  it("lets an explicit --host win over GITLAB_HOST", () => {
+    process.env["GITLAB_HOST"] = "env.example.com";
+    expect(resolveRepo(undefined, "dev.example.gy")).toMatchObject({
+      host: "dev.example.gy",
+    });
+  });
+
+  it("errors on a host-only -R instead of silently hitting the default host", () => {
+    expect(() => resolveRepo("dev.example.gy")).toThrow(
+      /names a host but no project/,
+    );
+    // And it points the agent at --host as the fix.
+    try {
+      resolveRepo("dev.example.gy");
+      throw new Error("expected throw");
+    } catch (e) {
+      expect(String((e as { suggestions?: string[] }).suggestions)).toMatch(
+        /--host dev\.example\.gy/,
+      );
+    }
+  });
+
+  it("errors on a bare non-host -R word with group/project guidance", () => {
+    expect(() => resolveRepo("myproject")).toThrow(
+      /must be of the form \[host\/\]group\/project/,
+    );
+  });
+});
+
 describe("parseRemoteUrl", () => {
   // Stays a pure parser: host validation belongs at the resolution boundary,
   // so this keeps answering "what does this URL say" for any host.

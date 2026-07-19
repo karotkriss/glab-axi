@@ -26,6 +26,9 @@ export interface SuggestionCtx {
 export function repoFlag(c: SuggestionCtx): string {
   const r = c.repo;
   if (r && r.source === "flag") {
+    // A host-only context (--host, no project) carries its host forward as
+    // --host, never as a `-R host/undefined` that our own parser would reject.
+    if (!r.project) return r.host ? ` --host ${r.host}` : "";
     const target = r.host ? `${r.host}/${r.project}` : r.project;
     return ` -R ${target}`;
   }
