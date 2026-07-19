@@ -151,7 +151,7 @@ Issues and merge requests are addressed by their project-scoped **IID** (the num
 
 A git remote only resolves to a project when its host is one the `glab` CLI is actually configured for, or when `GITLAB_HOST` explicitly names that host. A remote on a different forge (GitHub, Bitbucket, etc.) resolves to no project rather than a guess.
 
-`GITLAB_HOST` **overrides only the host** of an already-resolved project; on its own it does not select a project (there is no namespace to infer from a bare hostname).
+The HOST layers on top of that project resolution, in priority order: `--host <host>` placed **after** the command (an explicit selector that always wins) > `GITLAB_HOST` > the host carried by `-R`/the remote. `--host` alone (no `-R`) targets a self-hosted instance for host-level operations that have no project - `search projects`, `project list`, `api user` - without a project in scope; a project-scoped command still fails loud if no project resolved. A host-only `-R <host>` (naming a host but no group/project) is rejected with a `VALIDATION_ERROR` pointing at `--host`, rather than silently falling through to the default host.
 
 `mr view`, `mr checks`, and `mr diff` also accept a full merge request URL in place of the IID (e.g. `glab-axi mr view https://gitlab.example.com/group/project/-/merge_requests/42`); the URL's own host/project target the request, unless an explicit `-R` flag overrides it.
 
@@ -163,6 +163,9 @@ glab-axi issue list -R gitlab.example.com/group/subgroup/project
 
 # project from the git remote, host overridden by env
 GITLAB_HOST=gitlab.example.com glab-axi mr list
+
+# host-level op on a self-hosted instance, no project involved
+glab-axi search projects backend --host gitlab.example.com
 ```
 
 ### Projects and their repositories
