@@ -6,12 +6,14 @@ vi.mock("node:child_process", () => ({
 }));
 
 import { execFile, execFileSync } from "node:child_process";
+import { EventEmitter } from "node:events";
 import {
   glApi,
   glApiList,
   glRaw,
   glApiResult,
   glConfigGet,
+  glCredential,
 } from "../src/gl.js";
 
 const execFileMock = execFile as unknown as ReturnType<typeof vi.fn>;
@@ -29,6 +31,31 @@ function mockSpawnError(code: string) {
     callback(error, "", "");
   });
 }
+
+describe("stdin write errors", () => {
+  // A child that exits before reading stdin makes the write fail with EPIPE.
+  // An unhandled `error` on an EventEmitter throws, which took the whole
+  // process down and lost the child's real exit code - reachable for real when
+  // an OLD shadowed install does not implement the subcommand being invoked.
+  it("survives a child that closes stdin before reading it", async () => {
+    execFileMock.mockImplementation((_cmd, _args, _opts, callback) => {
+      const child = { stdin: new EventEmitter() as never };
+      (child.stdin as unknown as { end: () => void }).end = () => {
+        const epipe = new Error("write EPIPE") as Error & { code: string };
+        epipe.code = "EPIPE";
+        // Throws unless something is listening, exactly as the real stream does.
+        (child.stdin as unknown as EventEmitter).emit("error", epipe);
+      };
+      queueMicrotask(() => callback(null, "", ""));
+      return child;
+    });
+
+    const result = await glCredential("get", "protocol=https\n\n");
+
+    // The child's own outcome survives, which is the point of not crashing.
+    expect(result.exitCode).toBe(0);
+  });
+});
 
 describe("gl error mapping", () => {
   it("maps E2BIG to an actionable VALIDATION_ERROR for glApi", async () => {

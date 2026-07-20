@@ -4,6 +4,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("../src/gl.js", () => ({
   glApi: vi.fn(),
   glCredential: vi.fn(),
+  glConfigGet: vi.fn(() => ""),
+  glInstalls: vi.fn(() => [{ path: "/usr/bin/glab", version: "1.53.0" }]),
 }));
 
 // The credential helper reads git's protocol from stdin; never the real one.
@@ -14,14 +16,31 @@ vi.mock("../src/stdin.js", () => ({ readStdin: readStdinMock }));
 
 vi.mock("../src/hosts.js", () => ({
   knownHosts: () => new Set(["gitlab.example.com"]),
+  configPath: () => "/home/someone/.config/glab-cli/config.yml",
 }));
 
 import { authCommand } from "../src/commands/auth.js";
-import { glApi, glCredential } from "../src/gl.js";
+import { glApi, glConfigGet, glCredential, glInstalls } from "../src/gl.js";
 import type { RepoContext } from "../src/context.js";
 
 const glApiMock = glApi as unknown as ReturnType<typeof vi.fn>;
 const credMock = glCredential as unknown as ReturnType<typeof vi.fn>;
+const configMock = glConfigGet as unknown as ReturnType<typeof vi.fn>;
+const installsMock = glInstalls as unknown as ReturnType<typeof vi.fn>;
+
+/**
+ * The output minus the filesystem paths it reports.
+ *
+ * `bin` and `config_file` deliberately name the wrapped binary - that is the
+ * whole feature - so the "never leak the tool name" rule is asserted against
+ * the prose, not against the fields that exist to report those paths.
+ */
+function proseOf(out: string): string {
+  return out
+    .split("\n")
+    .filter((line) => !/^\s*(bin|path|config_file):/.test(line))
+    .join("\n");
+}
 
 const ctx: RepoContext = { host: "gitlab.example.com", source: "flag" };
 const TOKEN = "glpat-secret-value";
@@ -37,6 +56,8 @@ function missing() {
 beforeEach(() => {
   vi.clearAllMocks();
   readStdinMock.mockReturnValue("");
+  configMock.mockReturnValue("");
+  installsMock.mockReturnValue([{ path: "/usr/bin/glab", version: "1.53.0" }]);
   process.exitCode = undefined;
 });
 
@@ -47,11 +68,72 @@ describe("auth status", () => {
 
     const out = await authCommand(["status"], ctx);
 
-    expect(out).toContain("available: yes");
-    expect(out).toContain("username: oauth2");
-    expect(out).toContain("verified_as: someuser");
+    expect(out).toContain("gitlab.example.com,present,someuser");
     // The whole point of this verb: the token never reaches stdout.
     expect(out).not.toContain(TOKEN);
+  });
+
+  it("names the binary it shells out to, and its version", async () => {
+    credMock.mockResolvedValue(found());
+    glApiMock.mockResolvedValue({ username: "someuser" });
+
+    const out = await authCommand(["status"], ctx);
+
+    expect(out).toContain("bin: /usr/bin/glab");
+    expect(out).toContain("version: 1.53.0");
+    expect(out).toContain(
+      "config_file: /home/someone/.config/glab-cli/config.yml",
+    );
+  });
+
+  it("reports a shadowed install, which is the incident this verb exists for", async () => {
+    // Two installs, ~70 releases apart, the older one first on PATH.
+    installsMock.mockReturnValue([
+      { path: "/usr/bin/glab", version: "1.36.0" },
+      { path: "/snap/bin/glab", version: "1.108.0" },
+    ]);
+    credMock.mockResolvedValue(found());
+    glApiMock.mockResolvedValue({ username: "someuser" });
+
+    const out = await authCommand(["status"], ctx);
+
+    expect(out).toContain("shadowed[2]{path,version,active}:");
+    expect(out).toContain("/usr/bin/glab,1.36.0,yes");
+    expect(out).toContain("/snap/bin/glab,1.108.0,no");
+    expect(out).toContain("More than one CLI install is on PATH");
+  });
+
+  it("stays silent about shadowing when there is only one install", async () => {
+    credMock.mockResolvedValue(found());
+    glApiMock.mockResolvedValue({ username: "someuser" });
+
+    const out = await authCommand(["status"], ctx);
+
+    // Presence of the section IS the finding, so it must not cry wolf.
+    expect(out).not.toContain("shadowed");
+  });
+
+  it("flags a default host whose credential does not work", async () => {
+    configMock.mockReturnValue("gitlab.example.com");
+    credMock.mockResolvedValue(found());
+    glApiMock.mockRejectedValue(new Error("401 Unauthorized"));
+
+    const out = await authCommand(["status"], ctx);
+
+    expect(out).toContain("default_host: gitlab.example.com");
+    expect(out).toContain(
+      "Default host gitlab.example.com has no working credential",
+    );
+  });
+
+  it("reports every configured host when no host was given", async () => {
+    credMock.mockResolvedValue(found());
+    glApiMock.mockResolvedValue({ username: "someuser" });
+
+    const out = await authCommand(["status"], undefined);
+
+    expect(out).toContain("hosts[1]{host,token,account}:");
+    expect(out).toContain("gitlab.example.com,present,someuser");
   });
 
   it("asks the credential store for the host it was given", async () => {
@@ -88,10 +170,10 @@ describe("auth status", () => {
 
     const out = await authCommand(["status"], ctx);
 
-    expect(out).toContain("available: no");
-    expect(out).toContain("Set GITLAB_TOKEN");
-    // The wrapped CLI's binary name must never reach user-facing output.
-    expect(out).not.toMatch(/\bglab\b(?!-axi)/);
+    expect(out).toContain("gitlab.example.com,absent,no credential");
+    // The wrapped CLI's binary name must never reach user-facing prose; the
+    // `bin` field is the one deliberate exception, so it is excluded here.
+    expect(proseOf(out)).not.toMatch(/\bglab\b(?!-axi)/);
     // Absence is a successful answer to the question, so no API call is spent.
     expect(glApiMock).not.toHaveBeenCalled();
   });
@@ -102,17 +184,10 @@ describe("auth status", () => {
 
     const out = await authCommand(["status"], ctx);
 
-    expect(out).toContain("available: yes");
-    expect(out).toContain("verified: unavailable - ");
-    expect(out).not.toContain("verified_as:");
+    // Token still present - the credential may be fine and the host merely down.
+    expect(out).toContain("present");
+    expect(out).toContain("unavailable - ");
     expect(out).not.toContain(TOKEN);
-  });
-
-  it("requires a host rather than guessing one", async () => {
-    await expect(authCommand(["status"], undefined)).rejects.toThrow(
-      /Could not determine which GitLab host/,
-    );
-    expect(credMock).not.toHaveBeenCalled();
   });
 });
 

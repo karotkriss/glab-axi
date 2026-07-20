@@ -1,4 +1,6 @@
 import { execFile, execFileSync } from "node:child_process";
+import { accessSync, constants, realpathSync } from "node:fs";
+import { delimiter, join } from "node:path";
 import {
   argumentTooLargeError,
   AxiError,
@@ -227,23 +229,125 @@ export async function glApiResult(
 }
 
 /**
- * Read a per-host CLI config value, or "" when the host has no entry.
+ * Read a CLI config value, or "" when there is no entry.
+ *
+ * `host` scopes the read to one instance (`-h`); omitting it reads the global
+ * setting, which is how the default host is discovered.
  *
  * Offline and synchronous (no API call), so it is cheap enough for the
  * resolution path. Only value-safe keys belong here: never read `token`, which
  * is per-host too but would put a secret one interpolation away from output.
  */
-export function glConfigGet(key: string, host: string): string {
+export function glConfigGet(key: string, host?: string): string {
+  return glConfigGetResult(key, host)?.trim() ?? "";
+}
+
+/**
+ * The same read, but distinguishing "the key is unset" ("") from "the read
+ * failed" (null), which `glConfigGet` deliberately collapses.
+ *
+ * The resolution path only cares whether it got a usable value, so collapsing
+ * is right there. A caller that REPORTS the value to an agent must not, since
+ * rendering a failed read as "unset" is the confident lie the never-report-
+ * unverified-state rule exists to prevent - they are opposite facts.
+ */
+export function glConfigGetResult(key: string, host?: string): string | null {
+  const args = host
+    ? ["config", "get", "-h", host, key]
+    : ["config", "get", key];
   try {
-    return execFileSync("glab", ["config", "get", "-h", host, key], {
+    return execFileSync("glab", args, {
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
+    });
   } catch (err) {
     if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
       throw glNotInstalledError();
     }
-    return "";
+    return null;
+  }
+}
+
+/**
+ * Feed a child process its stdin without letting a closed pipe crash us.
+ *
+ * A child that exits before reading stdin makes the write fail with EPIPE, and
+ * an unhandled `error` on the stream takes down the whole process - losing the
+ * child's real exit code, which is the thing the caller actually wanted. That
+ * is not hypothetical: an OLD binary that does not implement the subcommand
+ * exits immediately, and reporting a stale install is precisely what this
+ * module now exists to do. The exec callback still resolves with the outcome,
+ * so swallowing the write error here loses nothing.
+ */
+function writeStdin(
+  child: { stdin?: NodeJS.WritableStream | null },
+  input: string,
+): void {
+  child.stdin?.on("error", () => {});
+  child.stdin?.end(input);
+}
+
+/** One executable named `glab` found on PATH. */
+export interface GlInstall {
+  /** The PATH entry as it would be invoked. */
+  path: string;
+  /** Version string the binary reports, or null when it would not say. */
+  version: string | null;
+}
+
+/**
+ * Every `glab` on PATH, in PATH order - so [0] is the one that actually answers.
+ *
+ * This exists because of a real incident: a host carried two installs (an OS
+ * package early on PATH, a much newer snap late on PATH) with separate config
+ * files and different default hosts. Every tool shelling out to the CLI drove
+ * the old one silently, and diagnosing it needed the bare CLI at every step.
+ * Reporting the whole list makes that a single command: if this returns more
+ * than one entry with different versions, that is the bug, stated.
+ *
+ * Entries are de-duplicated by realpath, because one binary reachable through
+ * several PATH entries (/usr/bin and /bin on a merged-usr system) is one
+ * install, not a shadowing conflict - reporting it as one would cry wolf on
+ * nearly every Linux box.
+ */
+export function glInstalls(): GlInstall[] {
+  const seen = new Set<string>();
+  const installs: GlInstall[] = [];
+  for (const dir of (process.env["PATH"] ?? "").split(delimiter)) {
+    if (!dir) continue;
+    const candidate = join(dir, "glab");
+    let real: string;
+    try {
+      accessSync(candidate, constants.X_OK);
+      real = realpathSync(candidate);
+    } catch {
+      continue; // not here, or not executable by us
+    }
+    if (seen.has(real)) continue;
+    seen.add(real);
+    installs.push({ path: candidate, version: readVersion(candidate) });
+  }
+  return installs;
+}
+
+/**
+ * Ask one specific binary for its version. Deliberately per-path, not a single
+ * `glab --version`: the point is to compare the installs against each other,
+ * which a PATH-resolved call can never do.
+ */
+function readVersion(binary: string): string | null {
+  try {
+    const out = execFileSync(binary, ["--version"], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    // Reported as a sentence ("Current glab version: 1.2.3 (...)"), so take the
+    // version itself rather than echoing prose that names the wrapped binary.
+    return /(\d+\.\d+\.\d+\S*)/.exec(out)?.[1] ?? null;
+  } catch {
+    // A binary that will not report a version is still a real install worth
+    // naming - "null" says the version is unknown, never that it is absent.
+    return null;
   }
 }
 
@@ -280,7 +384,7 @@ export function glCredential(
         resolve({ stdout: stdout ?? "", stderr: stderr ?? "", exitCode });
       },
     );
-    child.stdin?.end(input);
+    writeStdin(child, input);
   });
 }
 
@@ -310,6 +414,6 @@ export function runJq(input: string, expr: string): Promise<ExecResult> {
         resolve({ stdout: stdout ?? "", stderr: stderr ?? "", exitCode });
       },
     );
-    child.stdin?.end(input);
+    writeStdin(child, input);
   });
 }
