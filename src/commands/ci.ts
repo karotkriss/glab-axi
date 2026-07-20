@@ -11,7 +11,7 @@ import {
   requireProject,
   type Json,
 } from "../gl.js";
-import { AxiError } from "../errors.js";
+import { AxiError, scrubTool } from "../errors.js";
 import type { RepoContext } from "../context.js";
 import { formatCountLine } from "../format.js";
 import { getSuggestions, repoFlag } from "../suggestions.js";
@@ -195,7 +195,9 @@ async function hasActiveRunner(
     { ctx },
   );
   if (result.exitCode !== 0) {
-    return { unavailable: errorBody(result) || "could not list runners" };
+    return {
+      unavailable: scrubTool(errorBody(result)) || "could not list runners",
+    };
   }
   try {
     const runners: unknown = JSON.parse(result.stdout);
