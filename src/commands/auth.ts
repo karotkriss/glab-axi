@@ -149,7 +149,7 @@ async function authStatus(ctx?: RepoContext): Promise<string> {
     ]),
   );
 
-  const broken = rows.filter((row) => row.account !== null && !row.ok);
+  const broken = rows.filter((row) => !row.ok);
   const defaultRow = rows.find((row) => row.host === defaultHost);
   blocks.push(
     renderHelp([
@@ -177,7 +177,7 @@ interface HostStatus {
   host: string;
   /** Presence only, never any part of the value. */
   token: string;
-  account: string | null;
+  account: string;
   ok: boolean;
 }
 
