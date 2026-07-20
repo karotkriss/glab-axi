@@ -30,6 +30,25 @@ interface Refusal {
 }
 
 const REFUSALS: Record<string, Record<string, Refusal>> = {
+  auth: {
+    login: {
+      reason:
+        "`auth login` is not wrapped - authenticating a new host is interactive, and this tool refuses interactive prompts by design",
+      help: [
+        "Set GITLAB_TOKEN in the environment to supply a credential for the host non-interactively",
+        "Run `glab-axi auth status --host <host>` to check whether a credential already works",
+      ],
+    },
+    logout: {
+      reason:
+        "`auth logout` is not wrapped - this command never writes, rotates, or erases a credential, it only reads the one the GitLab CLI already manages",
+      help: [
+        "Run `glab-axi auth git-credential erase` with git's credential protocol on stdin to remove a stored credential",
+        "Run `glab-axi auth status --host <host>` to check whether a credential still works",
+      ],
+    },
+  },
+
   issue: {
     subissue: {
       reason:
