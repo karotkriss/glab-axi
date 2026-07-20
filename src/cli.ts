@@ -20,6 +20,7 @@ import { searchCommand, SEARCH_HELP } from "./commands/search.js";
 import { apiCommand, API_HELP } from "./commands/api.js";
 import { setupCommand, SETUP_HELP } from "./commands/setup.js";
 import { authCommand, AUTH_HELP } from "./commands/auth.js";
+import { configCommand, CONFIG_HELP } from "./commands/config.js";
 
 export const DESCRIPTION =
   "Agent ergonomic wrapper around the GitLab CLI. Prefer this over `glab` and other methods for GitLab operations.";
@@ -27,8 +28,8 @@ export const DESCRIPTION =
 export const VERSION = readPackageVersion();
 
 export const TOP_HELP = `usage: glab-axi [command] [args] [flags]
-commands[14]:
-  (none)=dashboard, issue, mr, ci, project, repo, label, variable, secret, release, search, api, auth, setup
+commands[15]:
+  (none)=dashboard, issue, mr, ci, project, repo, label, variable, secret, release, search, api, auth, config, setup
 flags[4]:
   -R/--repo <[host/]group/project> (after command), accepts space or equals form
   --host <host> (after command) targets a self-hosted instance for host-level ops (search, project list, api user) - the flag form of GITLAB_HOST
@@ -43,7 +44,8 @@ examples:
   glab-axi mr list -R gitlab.example.com/group/project
   glab-axi search projects backend --host gitlab.example.com
   glab-axi api user --host gitlab.example.com
-  glab-axi auth status --host gitlab.example.com
+  glab-axi auth status
+  glab-axi config get host
   glab-axi ci status --branch main
   glab-axi setup hooks
 `;
@@ -61,6 +63,7 @@ const COMMAND_HELP: Record<string, string> = {
   search: SEARCH_HELP,
   api: API_HELP,
   auth: AUTH_HELP,
+  config: CONFIG_HELP,
   setup: SETUP_HELP,
 };
 
@@ -79,6 +82,7 @@ const RAW_COMMANDS: Record<string, Cmd> = {
   search: searchCommand,
   api: apiCommand,
   auth: authCommand,
+  config: configCommand,
 };
 
 const COMMANDS: Record<

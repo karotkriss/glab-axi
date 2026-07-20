@@ -8,6 +8,7 @@ import { AxiError } from "../src/errors.js";
 // suggestion the CLI's own parser rejected).
 const IMPLEMENTED: Record<string, string[]> = {
   auth: ["status", "git-credential"],
+  config: ["get"],
   issue: [
     "list",
     "view",

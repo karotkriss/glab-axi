@@ -49,6 +49,25 @@ const REFUSALS: Record<string, Record<string, Refusal>> = {
     },
   },
 
+  config: {
+    set: {
+      reason:
+        "`config set` is not wrapped - this command only reads configuration, so it can never leave a machine in a state its own report does not describe",
+      help: [
+        "Run `glab-axi config get <key>` to read a configuration value",
+        "Run `glab-axi auth status` to see the resolved binary, config file, and default host",
+      ],
+    },
+    list: {
+      reason:
+        "`config list` is not wrapped - a bulk dump of the configuration file would carry the per-host token straight to stdout, which this tool never emits",
+      help: [
+        "Run `glab-axi config get <key>` to read one non-credential value",
+        "Run `glab-axi auth status` for the hosts, their credential presence, and the config file path",
+      ],
+    },
+  },
+
   issue: {
     subissue: {
       reason:

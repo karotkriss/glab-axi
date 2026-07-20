@@ -20,7 +20,7 @@ export function knownHosts(): Set<string> {
 }
 
 /** Path to the underlying CLI's config, honouring its env overrides. */
-function configPath(): string {
+export function configPath(): string {
   const explicit = process.env["GLAB_CONFIG_DIR"]?.trim();
   if (explicit) return join(explicit, "config.yml");
   const xdg = process.env["XDG_CONFIG_HOME"]?.trim();

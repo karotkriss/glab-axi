@@ -139,7 +139,8 @@ Every response ends with `help:` hints for logical next steps. Run `glab-axi --h
 | `release` | list / view / create / edit / delete |
 | `search`  | issues / mrs / projects |
 | `api`     | raw GitLab REST passthrough with a `{project}` placeholder |
-| `auth`    | status / git-credential (host-scoped clone credentials - see [Credentials](#credentials)) |
+| `auth`    | status / git-credential (host-scoped credentials and install introspection - see [Credentials](#credentials)) |
+| `config`  | get (read-only configuration introspection; refuses credential keys) |
 | `setup`   | install agent SessionStart hooks |
 
 Issues and merge requests are addressed by their project-scoped **IID** (the number in the URL).
@@ -233,18 +234,48 @@ A credential is **host-scoped**, so `auth` is host-addressed like the other host
 `auth status` answers whether a working credential exists, and never prints it:
 
 ```sh
-glab-axi auth status --host gitlab.example.com
+glab-axi auth status
 ```
 
 ```
-credential:
-  host: gitlab.example.com
-  available: yes
-  username: oauth2
-  verified_as: someuser
+install:
+  bin: /usr/bin/glab
+  version: 1.53.0
+  config_file: ~/.config/glab-cli/config.yml
+  default_host: gitlab.com
+hosts[2]{host,token,account}:
+  gitlab.com,absent,no credential
+  gitlab.example.com,present,someuser
+help[3]:
+  Default host gitlab.com has no working credential, so any command omitting --host targets it - pass `--host <host>` explicitly, or change the default
+  ...
 ```
 
-`verified_as` is the account the credential actually authenticated as, not merely what is on disk - a stale token reports `verified: unavailable - <reason>` rather than a misleading green.
+`account` is who the credential actually authenticated as, not merely what is on disk - a stale token reports `unavailable - <reason>` rather than a misleading green.
+`token` reports **presence only**, never any part of a value.
+
+Pass `--host <host>` to scope the report to one host; without it, every configured host is reported.
+
+#### Diagnosing setup
+
+The `install` block answers a question nothing else on the agent surface can: **which binary is this actually driving, and which configuration is it reading**.
+
+That matters because the answer is not always the one you expect.
+A machine with two installs of the GitLab CLI on `PATH` - say an OS package early and a much newer snap late - silently drives whichever comes first, with its own config file and its own default host.
+When more than one is found, a `shadowed` section names them all:
+
+```
+shadowed[2]{path,version,active}:
+  /usr/bin/glab,1.36.0,yes
+  /snap/bin/glab,1.108.0,no
+```
+
+The section only appears when there is a genuine conflict, so seeing it at all *is* the finding.
+One binary reachable through several `PATH` entries (`/usr/bin` and `/bin` on a merged-`usr` system) is one install, not a conflict, and is not reported as one.
+
+`default_host` is the other half.
+It is the host a command that omits `--host` lands on, so a default pointing at an instance you never authenticated against means a single call that forgets the flag aims at a dead account.
+When that host has no working credential, `auth status` says so in `help[]` rather than leaving it to be inferred.
 
 `auth git-credential` is a [git credential helper](https://git-scm.com/docs/gitcredentials): it speaks git's `key=value` protocol on stdin and stdout, so it can be handed straight to git.
 
@@ -261,6 +292,29 @@ Two things to know about it:
 Reading is all it does - `store` and `erase` pass through untouched, and nothing here writes, rotates, or caches a credential.
 
 Note that `GITLAB_TOKEN`, when set, answers for **every** host and overrides the per-host store, so a credential reported under one host may be that environment token rather than an entry for that host.
+
+### Configuration
+
+`config get` reads the GitLab CLI's own configuration, reporting which scope answered:
+
+```sh
+glab-axi config get host                                  # global
+glab-axi config get api_host --host gitlab.example.com    # per-host
+```
+
+```
+config:
+  key: host
+  value: gitlab.com
+  scope: global
+```
+
+A key that is genuinely unset reads `value: unset`; a read that *failed* errors instead, because "unset" and "could not read" are opposite facts.
+
+**Credential keys are refused.** Any key whose name contains `token` is rejected before the read happens - the underlying CLI will happily print a live token, and this one never does.
+Use `auth status` for the question that actually needs answering: whether a credential is present and still works.
+
+`config` is read-only; `config set` and `config list` are deliberately refused, the latter because a bulk dump would carry the per-host token to stdout.
 
 ## Development
 
