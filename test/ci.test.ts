@@ -31,6 +31,8 @@ vi.mock("../src/gl.js", () => {
       if (!ctx) throw new Error("no project");
       return encodeURIComponent(ctx.project);
     },
+    errorBody: (result: { stderr: string; stdout: string }) =>
+      [result.stderr, result.stdout].filter(Boolean).join("\n"),
   };
 });
 
@@ -40,11 +42,19 @@ vi.mock("../src/sleep.js", () => ({
 }));
 
 import { ciCommand } from "../src/commands/ci.js";
-import { glApi, glRaw } from "../src/gl.js";
+import { glApi, glRaw, glApiResult } from "../src/gl.js";
 import type { RepoContext } from "../src/context.js";
 
 const glApiMock = glApi as unknown as ReturnType<typeof vi.fn>;
 const glRawMock = glRaw as unknown as ReturnType<typeof vi.fn>;
+const glApiResultMock = glApiResult as unknown as ReturnType<typeof vi.fn>;
+
+/** A runner-list response for the stuck check: `n` online runners matched. */
+const runners = (n: number) => ({
+  stdout: JSON.stringify(Array.from({ length: n }, (_, i) => ({ id: i + 1 }))),
+  stderr: "",
+  exitCode: 0,
+});
 const ctx: RepoContext = {
   host: "gitlab.example.com",
   project: "group/project",
@@ -55,6 +65,9 @@ const PID = encodeURIComponent("group/project");
 beforeEach(() => {
   glApiMock.mockReset();
   glRawMock.mockReset();
+  // Default: a runner is available, so a pending job is queued, not stuck.
+  glApiResultMock.mockReset();
+  glApiResultMock.mockResolvedValue(runners(1));
   // `ci watch` signals a failed pipeline via process.exitCode; keep tests isolated.
   process.exitCode = 0;
 });
@@ -221,6 +234,87 @@ describe("ci bucketing / summary + verdict", () => {
     const out = await ciCommand(["jobs", "12345"], ctx);
     expect(out).toContain("checks: 0 passed, 1 failed");
     expect(out).toContain("verdict: failing");
+  });
+});
+
+describe("ci stuck detection", () => {
+  const pendingTagged = job({
+    id: 7,
+    name: "build",
+    status: "pending",
+    tag_list: ["docker"],
+  });
+
+  it("reports a pending job no runner carries the tags for, with the reason", async () => {
+    glApiMock.mockResolvedValueOnce([pendingTagged]);
+    glApiResultMock.mockResolvedValue(runners(0));
+    const out = await ciCommand(["jobs", "12345"], ctx);
+    expect(out).toContain("stuck[1]{id,name,reason}:");
+    expect(out).toContain("no active runner matching tags [docker]");
+    // The pipeline has not finished, so the pre-existing verdict is unchanged:
+    // the stuck signal is purely additive for existing consumers.
+    expect(out).toContain("verdict: running");
+  });
+
+  it("asks GitLab for online, unpaused runners carrying every one of the job's tags", async () => {
+    glApiMock.mockResolvedValueOnce([
+      job({ id: 7, status: "pending", tag_list: ["ubuntu", "docker"] }),
+    ]);
+    glApiResultMock.mockResolvedValue(runners(0));
+    await ciCommand(["jobs", "12345"], ctx);
+    const path = glApiResultMock.mock.calls[0][0] as string;
+    expect(path).toContain(`projects/${PID}/runners?`);
+    expect(path).toContain("status=online");
+    expect(path).toContain("paused=false");
+    expect(path).toContain("tag_list=docker%2Cubuntu");
+  });
+
+  it("stays silent when a matching runner exists (queued, not stuck)", async () => {
+    glApiMock.mockResolvedValueOnce([pendingTagged]);
+    glApiResultMock.mockResolvedValue(runners(1));
+    const out = await ciCommand(["jobs", "12345"], ctx);
+    expect(out).not.toContain("stuck");
+    expect(out).toContain("verdict: running");
+  });
+
+  it("costs no runner lookup when nothing is pending", async () => {
+    glApiMock.mockResolvedValueOnce([job({ id: 1, status: "running" })]);
+    const out = await ciCommand(["jobs", "12345"], ctx);
+    expect(glApiResultMock).not.toHaveBeenCalled();
+    expect(out).not.toContain("stuck");
+  });
+
+  it("says unavailable rather than claiming stuck when the runner list cannot be read", async () => {
+    glApiMock.mockResolvedValueOnce([pendingTagged]);
+    glApiResultMock.mockResolvedValue({
+      stdout: '{"message":"403 Forbidden"}',
+      stderr: "",
+      exitCode: 1,
+    });
+    const out = await ciCommand(["jobs", "12345"], ctx);
+    expect(out).toContain("stuck: unavailable -");
+    expect(out).not.toContain("stuck[");
+  });
+
+  it("names the untagged case separately", async () => {
+    glApiMock.mockResolvedValueOnce([
+      job({ id: 7, status: "pending", tag_list: [] }),
+    ]);
+    glApiResultMock.mockResolvedValue(runners(0));
+    const out = await ciCommand(["jobs", "12345"], ctx);
+    expect(out).toContain("no active runner available");
+    expect(glApiResultMock.mock.calls[0][0]).not.toContain("tag_list");
+  });
+
+  it("looks a shared tag set up once across several pending jobs", async () => {
+    glApiMock.mockResolvedValueOnce([
+      job({ id: 7, name: "build", status: "pending", tag_list: ["docker"] }),
+      job({ id: 8, name: "test", status: "pending", tag_list: ["docker"] }),
+    ]);
+    glApiResultMock.mockResolvedValue(runners(0));
+    const out = await ciCommand(["jobs", "12345"], ctx);
+    expect(glApiResultMock).toHaveBeenCalledTimes(1);
+    expect(out).toContain("stuck[2]{id,name,reason}:");
   });
 });
 

@@ -2,7 +2,15 @@ import { mkdtempSync, mkdirSync, lstatSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { encode } from "@toon-format/toon";
-import { glApi, glApiList, glRaw, requireProject, type Json } from "../gl.js";
+import {
+  glApi,
+  glApiList,
+  glApiResult,
+  glRaw,
+  errorBody,
+  requireProject,
+  type Json,
+} from "../gl.js";
 import { AxiError } from "../errors.js";
 import type { RepoContext } from "../context.js";
 import { formatCountLine } from "../format.js";
@@ -136,12 +144,126 @@ function summarizeJobs(jobs: Json[]): JobSummary {
   return { passed, failed, running, neutral, verdict };
 }
 
-/** Render the at-a-glance summary + verdict lines (the GetChecks header). */
-export function renderSummary(jobs: Json[]): string {
+// ---------------------------------------------------------------------------
+// Stuck-job detection
+// ---------------------------------------------------------------------------
+
+/**
+ * A pending job that no active runner can ever pick up is STUCK: it is blocked,
+ * not queued, and will never start on its own. From the pipeline's own status a
+ * poller cannot tell the two apart, so it waits forever on something that needs
+ * a human - the failure this section exists to prevent.
+ *
+ * The REST job payload carries no `stuck` flag (only GraphQL's `CiJob.stuck`
+ * does, and it carries no reason), so the condition is derived from the two
+ * things REST does expose: the job's `tag_list`, and the project's runner list
+ * filtered by those tags. GitLab's `?tag_list=` filter is AND semantics - a
+ * runner matches only when it carries every listed tag - which is exactly its
+ * own job-to-runner matching rule, so the answer is the server's, not a guess.
+ */
+interface StuckJob {
+  id: Json;
+  name: Json;
+  reason: string;
+}
+
+const stuckSchema: FieldDef[] = [field("id"), field("name"), field("reason")];
+
+/** The job's required runner tags, normalized and sorted for cache keying. */
+function jobTags(job: Json): string[] {
+  const tags = Array.isArray(job.tag_list) ? job.tag_list : [];
+  return tags.filter((t: unknown) => typeof t === "string" && t).sort();
+}
+
+/**
+ * Ask GitLab whether any active runner available to this project can take a job
+ * with these tags. Returns the failure reason instead of a verdict when the
+ * question could not be asked - never a bare `false`, which would report a
+ * stuck pipeline the server never confirmed.
+ */
+async function hasActiveRunner(
+  tags: string[],
+  ctx?: RepoContext,
+): Promise<boolean | { unavailable: string }> {
+  const params = new URLSearchParams();
+  params.set("status", "online");
+  params.set("paused", "false");
+  params.set("per_page", "1");
+  if (tags.length > 0) params.set("tag_list", tags.join(","));
+  const result = await glApiResult(
+    `projects/${requireProject(ctx)}/runners?${params.toString()}`,
+    { ctx },
+  );
+  if (result.exitCode !== 0) {
+    return { unavailable: errorBody(result) || "could not list runners" };
+  }
+  try {
+    const runners: unknown = JSON.parse(result.stdout);
+    if (!Array.isArray(runners)) return { unavailable: "unexpected response" };
+    return runners.length > 0;
+  } catch {
+    return { unavailable: "unexpected response" };
+  }
+}
+
+/**
+ * The `stuck` section: one row per pending job no runner can pick up, or
+ * nothing at all when the pipeline has no pending jobs (the common case, and
+ * the only one that costs no extra request).
+ */
+async function renderStuck(jobs: Json[], ctx?: RepoContext): Promise<string> {
+  const pending = jobs.filter((job) => job.status === "pending");
+  if (pending.length === 0) return "";
+
+  // One lookup per distinct tag set, not per job: a pipeline's pending jobs
+  // usually share one.
+  const answers = new Map<string, boolean | { unavailable: string }>();
+  const stuck: StuckJob[] = [];
+  for (const job of pending) {
+    const tags = jobTags(job);
+    const key = tags.join(",");
+    if (!answers.has(key)) answers.set(key, await hasActiveRunner(tags, ctx));
+    const answer = answers.get(key)!;
+    if (answer === true) continue;
+    if (answer !== false) return `stuck: unavailable - ${answer.unavailable}`;
+    stuck.push({
+      id: job.id,
+      name: job.name,
+      // ponytail: an untagged job also needs a runner that accepts untagged
+      // work, which the runner LIST endpoint does not expose (`run_untagged`
+      // is detail-only, and reading it needs per-runner admin access). So an
+      // instance whose runners are all tag-only under-reports here. That is a
+      // missed detection, never a false one.
+      reason: tags.length
+        ? `no active runner matching tags [${tags.join(" ")}]`
+        : "no active runner available",
+    });
+  }
+  if (stuck.length === 0) return "";
+  return renderList("stuck", stuck, stuckSchema);
+}
+
+/**
+ * Render the at-a-glance summary + verdict lines (the GetChecks header), plus
+ * the `stuck` section when one applies.
+ *
+ * `verdict` deliberately keeps its existing three values: a stuck pipeline IS
+ * still running, and pollers already branch on that field. The new state is
+ * additive - a poller learns "escalate instead of waiting" from the presence of
+ * a `stuck` section, without any existing field changing shape or meaning.
+ */
+export async function renderSummary(
+  jobs: Json[],
+  ctx?: RepoContext,
+): Promise<string> {
   const s = summarizeJobs(jobs);
   let checks = `checks: ${s.passed} passed, ${s.failed} failed`;
   if (s.running > 0) checks += `, ${s.running} running`;
-  return renderOutput([checks, `verdict: ${s.verdict}`]);
+  return renderOutput([
+    checks,
+    `verdict: ${s.verdict}`,
+    await renderStuck(jobs, ctx),
+  ]);
 }
 
 // ---------------------------------------------------------------------------
@@ -197,6 +319,7 @@ notes:
   watch blocks until the pipeline finishes, prints the final verdict, and exits non-zero if it did not succeed.
   run triggers a new pipeline from the project's .gitlab-ci.yml on --ref. GitLab has no workflow entity to select or dispatch (the ref determines what runs), so there is no workflow list/enable/disable here.
   cancel is a no-op (already: true) on a pipeline that already finished.
+  status and view (and mr checks) add a stuck section listing any pending job no active runner can take, with the reason (e.g. no runner carries its tags). Such a job is blocked and will never start on its own, so a poller should escalate rather than keep waiting. verdict stays running, since the pipeline has not finished.
   log strips ANSI escapes before measuring; a truncated log also spills the full trace to a local temp file (full_log) to grep instead of paying for --full.
 examples:
   glab-axi ci list --ref main --status failed
@@ -259,7 +382,7 @@ async function ciView(args: string[], ctx?: RepoContext): Promise<string> {
 
   return renderOutput([
     renderDetail("pipeline", pipeline, pipelineDetailSchema),
-    renderSummary(jobs),
+    await renderSummary(jobs, ctx),
     renderJobs(jobs),
     renderHelp(
       getSuggestions({ domain: "ci", action: "view", id: pid, repo: ctx }),
@@ -342,7 +465,7 @@ async function ciStatus(args: string[], ctx?: RepoContext): Promise<string> {
   const jobs = await fetchJobs(pipeline.id, ctx);
   return renderOutput([
     renderDetail("pipeline", pipeline, pipelineDetailSchema),
-    renderSummary(jobs),
+    await renderSummary(jobs, ctx),
     renderJobs(jobs),
     renderHelp(
       getSuggestions({
@@ -409,7 +532,7 @@ async function ciWatch(args: string[], ctx?: RepoContext): Promise<string> {
 
   return renderOutput([
     renderDetail("pipeline", terminal, pipelineDetailSchema),
-    renderSummary(jobs),
+    await renderSummary(jobs, ctx),
     renderJobs(jobs),
     renderHelp(
       getSuggestions({
@@ -426,7 +549,7 @@ async function ciJobs(args: string[], ctx?: RepoContext): Promise<string> {
   const pid = takeNumber(args, "pipeline");
   const jobs = await fetchJobs(pid, ctx);
   return renderOutput([
-    renderSummary(jobs),
+    await renderSummary(jobs, ctx),
     renderJobs(jobs),
     renderHelp(
       getSuggestions({ domain: "ci", action: "jobs", id: pid, repo: ctx }),
