@@ -332,7 +332,7 @@ flags{merge}:
 flags{approve,unapprove}:
   (none) - GitLab models review as an approval plus discussion threads, so there is no \`mr review\`: approve/unapprove for the verdict, comment for feedback
 flags{checks}:
-  (none) - prints the MR pipeline's aggregate pass/fail/running counts + verdict
+  (none) - prints the MR pipeline's aggregate pass/fail/running counts + verdict, plus a stuck section for any pending job no active runner can take
 flags{comment}:
   --body <text> or --body-file <path> (required)
 notes:
