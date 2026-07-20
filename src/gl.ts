@@ -248,6 +248,43 @@ export function glConfigGet(key: string, host: string): string {
 }
 
 /**
+ * Run the wrapped CLI's own git-credential helper, feeding it `input` on stdin
+ * and returning its raw result without throwing.
+ *
+ * The credential itself is never parsed, logged, or stored here - it is read
+ * from whatever store the wrapped CLI already manages and handed straight back
+ * to the caller. That is the whole point: the alternative is every consumer
+ * learning the CLI's on-disk config layout, which is an internal detail that
+ * can change under them.
+ */
+export function glCredential(
+  operation: string,
+  input: string,
+): Promise<ExecResult> {
+  return new Promise((resolve) => {
+    const child = execFile(
+      "glab",
+      ["auth", "git-credential", operation],
+      { maxBuffer: MAX_BUFFER_BYTES },
+      (error, stdout, stderr) => {
+        const err = error as (Error & { code?: string | number }) | null;
+        if (err && err.code === "ENOENT") {
+          resolve({ stdout: "", stderr: "ENOENT", exitCode: 127 });
+          return;
+        }
+        const exitCode = err
+          ? typeof err.code === "number"
+            ? err.code
+            : 1
+          : 0;
+        resolve({ stdout: stdout ?? "", stderr: stderr ?? "", exitCode });
+      },
+    );
+    child.stdin?.end(input);
+  });
+}
+
+/**
  * Pipe JSON text through the system `jq` binary (raw output, `-r`), returning
  * the full result without throwing. Backs `api --jq`, giving real jq semantics
  * with zero extra npm deps; a missing binary surfaces as `stderr === "ENOENT"`

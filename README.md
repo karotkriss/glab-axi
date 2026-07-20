@@ -139,6 +139,7 @@ Every response ends with `help:` hints for logical next steps. Run `glab-axi --h
 | `release` | list / view / create / edit / delete |
 | `search`  | issues / mrs / projects |
 | `api`     | raw GitLab REST passthrough with a `{project}` placeholder |
+| `auth`    | status / git-credential (host-scoped clone credentials - see [Credentials](#credentials)) |
 | `setup`   | install agent SessionStart hooks |
 
 Issues and merge requests are addressed by their project-scoped **IID** (the number in the URL).
@@ -221,6 +222,45 @@ glab-axi api projects/{project} --raw | jq .default_branch
 glab-axi mr view 42 --jq .detailed_merge_status
 glab-axi mr list --state opened --jq '.[].iid'
 ```
+
+### Credentials
+
+Cloning or pushing a private project over HTTPS needs a credential.
+`auth` reads the one the GitLab CLI already manages, so nothing has to parse its config file - an internal detail that can change without warning.
+
+A credential is **host-scoped**, so `auth` is host-addressed like the other host-level operations: pass `--host <host>`, or let a `-R host/group/project` or the git remote supply it.
+
+`auth status` answers whether a working credential exists, and never prints it:
+
+```sh
+glab-axi auth status --host gitlab.example.com
+```
+
+```
+credential:
+  host: gitlab.example.com
+  available: yes
+  username: oauth2
+  verified_as: someuser
+```
+
+`verified_as` is the account the credential actually authenticated as, not merely what is on disk - a stale token reports `verified: unavailable - <reason>` rather than a misleading green.
+
+`auth git-credential` is a [git credential helper](https://git-scm.com/docs/gitcredentials): it speaks git's `key=value` protocol on stdin and stdout, so it can be handed straight to git.
+
+```sh
+git -c credential.helper='!glab-axi auth git-credential' \
+  clone https://gitlab.example.com/group/project.git
+```
+
+Two things to know about it:
+
+- **It is the only surface that emits a password**, because that is what the git protocol requires. It is meant for git to consume, not for an agent to read, and whatever invokes it owns keeping that output out of logs, transcripts, and status lines. Use `auth status` whenever the question is "do I have a credential" rather than "give me the credential".
+- **It does not emit TOON, and stays silent on failure.** git parses its stdout as credential fields and treats anything else as malformed, so a structured error would break the operation the verb exists to serve. The exit code carries the outcome; `auth status` is where a readable diagnosis lives.
+
+Reading is all it does - `store` and `erase` pass through untouched, and nothing here writes, rotates, or caches a credential.
+
+Note that `GITLAB_TOKEN`, when set, answers for **every** host and overrides the per-host store, so a credential reported under one host may be that environment token rather than an entry for that host.
 
 ## Development
 
