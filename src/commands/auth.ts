@@ -2,22 +2,24 @@ import { AxiError, glNotInstalledError } from "../errors.js";
 import { glApi, glCredential } from "../gl.js";
 import { knownHosts } from "../hosts.js";
 import { readStdin } from "../stdin.js";
+import { refuseSubcommand } from "../refusals.js";
 import { renderHelp, renderOutput } from "../toon.js";
 import type { RepoContext } from "../context.js";
 
 export const AUTH_HELP = `usage: glab-axi auth <subcommand> [flags]
 subcommands[2]:
-  status          report whether a working GitLab credential exists for a host
-  git-credential  git credential helper passthrough (for git, not for agents)
+  status, git-credential <get|store|erase>
 flags{status}:
   --host <host> (global) the host to check; also settable via -R host/group/project
 notes:
   A credential is HOST-scoped, so both subcommands are host-addressed, never project-addressed.
-  \`status\` never prints the credential. It reports presence plus the account the
-  credential authenticated as, which is what proves the credential actually works.
-  \`git-credential\` speaks git's credential protocol on stdin/stdout: it is the
-  ONLY surface that emits a password, and it is meant to be wired into git, not
-  read by an agent. Whatever runs it owns keeping that output out of logs.
+  \`status\` reports whether a working GitLab credential exists for a host. It never
+  prints the credential - it reports presence plus the account the credential
+  authenticated as, which is what proves the credential actually works.
+  \`git-credential\` is a git credential helper passthrough (for git, not for agents).
+  It speaks git's credential protocol on stdin/stdout: it is the ONLY surface that
+  emits a password, and it is meant to be wired into git, not read by an agent.
+  Whatever runs it owns keeping that output out of logs.
   Credentials are read from the store the GitLab CLI already manages. This command
   never writes, rotates, or caches one - \`store\`/\`erase\` are passed through untouched.
   GITLAB_TOKEN, when set, answers for EVERY host, overriding the per-host store - so a
@@ -39,14 +41,13 @@ export async function authCommand(
   const sub = args[0];
   if (sub === "status") return authStatus(ctx);
   if (sub === "git-credential") return gitCredential(args.slice(1));
-  throw new AxiError(
-    sub ? `Unknown auth subcommand: ${sub}` : "auth requires a subcommand",
-    "VALIDATION_ERROR",
-    [
+  if (sub === undefined) {
+    throw new AxiError("auth requires a subcommand", "VALIDATION_ERROR", [
       "Run `glab-axi auth status --host <host>` to check for a working credential",
       "Run `glab-axi auth git-credential get` to use it as a git credential helper",
-    ],
-  );
+    ]);
+  }
+  return refuseSubcommand("auth", sub, AUTH_HELP);
 }
 
 /**

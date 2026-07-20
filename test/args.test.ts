@@ -57,6 +57,7 @@ import { VARIABLE_HELP } from "../src/commands/variable.js";
 import { SECRET_HELP } from "../src/commands/secret.js";
 import { RELEASE_HELP } from "../src/commands/release.js";
 import { SEARCH_HELP } from "../src/commands/search.js";
+import { AUTH_HELP } from "../src/commands/auth.js";
 
 const glApiMock = glApi as unknown as ReturnType<typeof vi.fn>;
 const glApiResultMock = glApiResult as unknown as ReturnType<typeof vi.fn>;
@@ -349,6 +350,7 @@ describe("parseHelpFlags", () => {
     ["secret", SECRET_HELP],
     ["release", RELEASE_HELP],
     ["search", SEARCH_HELP],
+    ["auth", AUTH_HELP],
   ];
 
   it("finds every subcommand each command documents", () => {
@@ -394,5 +396,11 @@ describe("parseHelpFlags", () => {
     for (const sub of ["get", "view", "set", "delete", "rm"]) {
       expect(perSub.get(sub), sub).toContain("--env");
     }
+  });
+
+  it("parses the exact subcommand set out of a comma-separated block", () => {
+    expect(parseHelpFlags(AUTH_HELP).subs).toEqual(
+      new Set(["status", "git-credential"]),
+    );
   });
 });
