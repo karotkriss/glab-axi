@@ -321,7 +321,7 @@ notes:
   watch blocks until the pipeline finishes, prints the final verdict, and exits non-zero if it did not succeed.
   run triggers a new pipeline from the project's .gitlab-ci.yml on --ref. GitLab has no workflow entity to select or dispatch (the ref determines what runs), so there is no workflow list/enable/disable here.
   cancel is a no-op (already: true) on a pipeline that already finished.
-  status and view (and mr checks) add a stuck section listing any pending job no active runner can take, with the reason (e.g. no runner carries its tags). Such a job is blocked and will never start on its own, so a poller should escalate rather than keep waiting. verdict stays running, since the pipeline has not finished.
+  status, view and jobs (and mr checks) add a stuck section listing any pending job no active runner can take, with the reason (e.g. no runner carries its tags). Such a job is blocked and will never start on its own, so a poller should escalate rather than keep waiting. verdict stays running, since the pipeline has not finished.
   log strips ANSI escapes before measuring; a truncated log also spills the full trace to a local temp file (full_log) to grep instead of paying for --full.
 examples:
   glab-axi ci list --ref main --status failed
