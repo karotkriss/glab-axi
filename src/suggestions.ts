@@ -45,7 +45,7 @@ const table: Entry[] = [
   {
     match: (c) => c.domain === "home",
     lines: () => [
-      "Run `glab-axi <command> <subcommand>` — commands: issue, mr, ci, project, repo, label, variable, secret, release, search, api",
+      "Run `glab-axi <command> <subcommand>` — commands: issue, mr, ci, project, repo, label, variable, secret, release, search, api, auth",
     ],
   },
 
