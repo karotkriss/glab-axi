@@ -1092,7 +1092,7 @@ async function mrChecks(args: string[], ctx?: RepoContext): Promise<string> {
     ]);
   }
   const jobs = await fetchJobs(pipeline.id, target);
-  return renderOutput([renderSummary(jobs), help]);
+  return renderOutput([await renderSummary(jobs, target), help]);
 }
 
 /**

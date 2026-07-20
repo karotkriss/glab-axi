@@ -10,6 +10,7 @@ Agents drive CLIs by reading stdout. Raw `glab`/REST output is verbose JSON full
 - **TOON, not JSON** - ~40% fewer tokens, still readable.
 - **Minimal schemas** - lists default to 3-5 fields; ask for more with `--fields a,b,c`.
 - **Pre-computed aggregates** - pipeline views report `checks: N passed, M failed, K running` and an at-a-glance verdict, so an agent never has to count jobs.
+- **Stuck pipelines are named, not just slow** - a pending job no active runner can take is reported in a `stuck` section with the reason, so a poller can tell "blocked, escalate" from "still running, keep waiting".
 - **Real totals, not guesses** - list output reads GitLab's own count (`count: 30 of 847 total`) instead of restating the `--limit` it was just given.
 - **Bounded, greppable CI logs** - `ci log` strips ANSI noise and truncates to a token-safe tail; a truncated trace also spills the full log to a local file the agent can grep instead of paying for it in context.
 - **Idempotent mutations** - closing a closed issue or merging a merged MR is a no-op with exit 0.

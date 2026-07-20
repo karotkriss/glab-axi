@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `ci status`, `ci view`, `ci jobs` and `mr checks` now emit a `stuck` section listing any pending job that no active runner can pick up, with the reason (`no active runner matching tags [docker]`, or `no active runner available` when the job is untagged). Such a job is blocked and will never start on its own, which a poller previously could not tell apart from a pipeline that was merely still running. The section is absent when nothing is pending or a matching runner exists, and reads `stuck: unavailable - <reason>` when the runner list could not be read, so a stuck pipeline is never claimed without the server confirming it. Existing fields are unchanged: `verdict` keeps its three values, since a stuck pipeline has genuinely not finished.
+
 ## [0.5.0] - 2026-07-19
 
 ### Added
