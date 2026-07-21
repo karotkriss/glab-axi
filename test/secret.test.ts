@@ -134,7 +134,12 @@ describe("secret set", () => {
     expect(call[0]).toBe(`projects/${PID}/variables`);
     expect(call[1].method).toBe("POST");
     expect(call[1].rawFields).toContain("key=OPENAI_API_KEY");
-    expect(call[1].rawFields).toContain("value=sk-supersecretvalue");
+    // The value goes to the child on stdin, never as a parameter on its argv.
+    expect(call[1].stdinField).toEqual({
+      name: "value",
+      value: "sk-supersecretvalue",
+    });
+    expect(call[1].rawFields ?? []).not.toContain("value=sk-supersecretvalue");
     expect(call[1].fields).toContain("masked=true");
     expect(call[1].fields).toContain("protected=true");
     expect(out).toContain("created");

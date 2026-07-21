@@ -98,6 +98,13 @@ function parseVariableBody(stdout: string): Json | undefined {
  * for an update that changed nothing. Every other mutation in this CLI reports
  * `already: true` here, and reusing the GET this function already makes costs
  * nothing. Shared by `variable set` and `secret set`, so both inherit it.
+ *
+ * The value ALWAYS travels via `stdinField`, never argv - see that option in
+ * gl.ts for why. It is set here, in the one function both surfaces route
+ * through, rather than in `secret set` alone: a per-caller rule would be one
+ * forgotten line away from putting a credential back on the child's argv, and
+ * `variable set` reads from the same stdin, so there is no case where argv is
+ * the better channel. Do not "optimise" the plain-variable path back to `-f`.
  */
 export async function upsertVariable(
   ctx: RepoContext | undefined,
@@ -115,12 +122,9 @@ export async function upsertVariable(
   if (created) {
     const variable = await glApi<Json>(variablesPath(ctx), {
       method: "POST",
-      rawFields: [
-        `key=${name}`,
-        `value=${value}`,
-        `environment_scope=${opts.env}`,
-      ],
+      rawFields: [`key=${name}`, `environment_scope=${opts.env}`],
       fields: flags,
+      stdinField: { name: "value", value },
       ctx,
     });
     return { variable, created, unchanged: false };
@@ -138,8 +142,8 @@ export async function upsertVariable(
 
   const variable = await glApi<Json>(variableKeyPath(ctx, name, opts.env), {
     method: "PUT",
-    rawFields: [`value=${value}`],
     fields: flags,
+    stdinField: { name: "value", value },
     ctx,
   });
   return { variable, created, unchanged: false };
