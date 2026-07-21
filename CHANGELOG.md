@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-20
+
 ### Added
 
 - New `auth` command for host-scoped clone credentials, so nothing has to read the GitLab CLI's config file to get one - an internal detail that can change format without warning. `auth git-credential` is a git credential helper passthrough (`git -c credential.helper='!glab-axi auth git-credential' clone https://...`), delegating to the credential store the GitLab CLI already manages rather than reimplementing credential handling; `store` and `erase` pass through untouched, and nothing writes, rotates, or caches a credential. `auth status` answers whether a working credential exists without ever printing it, reporting `account` proven by an authenticated call rather than mere presence on disk, and `unavailable - <reason>` when that could not be confirmed. Both are host-addressed via `--host`, `-R host/group/project`, or the git remote. `git-credential` deliberately emits git's raw protocol instead of TOON and stays silent on failure, because git parses its stdout as credential fields; it is the only surface that emits a password, and its caller owns keeping that output out of logs.
@@ -143,7 +145,8 @@ First published release.
 - Installable Agent Skill generated from the CLI's own help, with a CI freshness check.
 - Generic host/project targeting via `-R [host/]group/project`, the `origin` git remote, or `GITLAB_HOST` (host-only override).
 
-[Unreleased]: https://github.com/karotkriss/glab-axi/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/karotkriss/glab-axi/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/karotkriss/glab-axi/releases/tag/v0.6.0
 [0.5.0]: https://github.com/karotkriss/glab-axi/releases/tag/v0.5.0
 [0.4.0]: https://github.com/karotkriss/glab-axi/releases/tag/v0.4.0
 [0.3.0]: https://github.com/karotkriss/glab-axi/releases/tag/v0.3.0
