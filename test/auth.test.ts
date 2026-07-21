@@ -186,7 +186,15 @@ describe("auth status", () => {
 
     // Token still present - the credential may be fine and the host merely down.
     expect(out).toContain("present");
+    // Assert the REASON is interpolated, not just the "unavailable - " prefix.
+    // Two branches emit that prefix (the other one when the host accepts the
+    // credential but names no account), so matching the prefix alone passes
+    // even if the reason is dropped entirely - which is the one thing this
+    // test exists to guard. Naming the failure is what distinguishes an
+    // unreachable host from an absent credential.
     expect(out).toContain("unavailable - ");
+    expect(out).toContain("ECONNREFUSED");
+    expect(out).not.toContain("named no account");
     expect(out).not.toContain(TOKEN);
   });
 });

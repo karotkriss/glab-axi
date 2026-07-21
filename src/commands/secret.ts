@@ -104,6 +104,13 @@ async function secretList(args: string[], ctx?: RepoContext): Promise<string> {
  * masked CI/CD credential must not appear. The flag stays declared in
  * SECRET_HELP so this guiding refusal fires instead of a generic
  * unknown-flag error. Plain variables keep `--value` in variable.ts.
+ *
+ * This refusal is only honest because the value also stays off the CHILD's
+ * argv: `upsertVariable` hands it over via stdin (`-F value=@-`). Refusing the
+ * flag here while passing the same secret to a subprocess as `-f value=<it>`
+ * left it world-readable anyway and told the caller it was protected - the
+ * refusal has to be backed by the path it redirects to, or it is just a
+ * comforting message. Do not weaken one half without the other.
  */
 const STDIN_ONLY_SUGGESTION = `Pipe the value: \`printf %s "<value>" | glab-axi secret set <name>\``;
 

@@ -25,6 +25,21 @@ export interface GlApiOptions {
   fields?: string[];
   /** Raw string parameters (no type inference): glab -f key=value. */
   rawFields?: string[];
+  /**
+   * One parameter whose value is fed to the child on stdin instead of argv,
+   * emitted as `-F <name>=@-`. Use it for anything secret: every element of a
+   * child's argument list is world-readable at /proc/<pid>/cmdline for the
+   * lifetime of the process, so a credential passed as `-f value=...` is
+   * readable by any other process on the machine.
+   *
+   * The `@` form is read verbatim as a string - the type inference `-F`
+   * normally applies is NOT applied to a value read this way (verified against
+   * glab 1.53.0: "true" and "12345678" both stored as strings), so a secret
+   * that happens to look like a boolean or an integer survives intact.
+   *
+   * Only one field can come from stdin, since there is only one stdin.
+   */
+  stdinField?: { name: string; value: string };
   /** Extra HTTP headers: glab -H key:value. */
   headers?: string[];
   paginate?: boolean;
@@ -71,9 +86,29 @@ function buildApiArgs(path: string, opts: GlApiOptions): string[] {
   const args = ["api", path, "--method", (opts.method ?? "GET").toUpperCase()];
   for (const f of opts.fields ?? []) args.push("-F", f);
   for (const f of opts.rawFields ?? []) args.push("-f", f);
+  // The name is safe to put on argv; only the value is withheld, and `@-`
+  // tells the child to read it from the stdin `run` writes.
+  if (opts.stdinField) args.push("-F", `${opts.stdinField.name}=@-`);
   for (const h of opts.headers ?? []) args.push("-H", h);
   if (opts.paginate) args.push("--paginate");
   return args;
+}
+
+/**
+ * Build and run a `glab api` invocation, routing `stdinField`'s value to the
+ * child's stdin. Every entry point goes through here so a caller cannot get
+ * the argv-vs-stdin split wrong by reaching for `run` directly.
+ */
+function runApi(
+  path: string,
+  opts: GlApiOptions,
+  extraArgs: string[] = [],
+): Promise<ExecResult> {
+  return run(
+    [...buildApiArgs(path, opts), ...extraArgs],
+    opts.ctx,
+    opts.stdinField?.value,
+  );
 }
 
 /**
@@ -86,9 +121,13 @@ export function errorBody(result: ExecResult): string {
   return [result.stderr, result.stdout].filter(Boolean).join("\n");
 }
 
-function run(args: string[], ctx?: RepoContext): Promise<ExecResult> {
+function run(
+  args: string[],
+  ctx?: RepoContext,
+  input?: string,
+): Promise<ExecResult> {
   return new Promise((resolve) => {
-    execFile(
+    const child = execFile(
       "glab",
       args,
       { maxBuffer: MAX_BUFFER_BYTES, env: envFor(ctx) },
@@ -118,6 +157,9 @@ function run(args: string[], ctx?: RepoContext): Promise<ExecResult> {
         });
       },
     );
+    // Only write when a value was withheld from argv; a child that is not
+    // expecting stdin must keep its inherited pipe untouched.
+    if (input !== undefined) writeStdin(child, input);
   });
 }
 
@@ -126,7 +168,7 @@ export async function glApi<T = Json>(
   path: string,
   opts: GlApiOptions = {},
 ): Promise<T> {
-  const result = await run(buildApiArgs(path, opts), opts.ctx);
+  const result = await runApi(path, opts);
   if (result.stderr === "ENOENT") throw glNotInstalledError();
   if (result.stderr === "E2BIG") throw argumentTooLargeError();
   if (result.exitCode !== 0)
@@ -172,7 +214,7 @@ export async function glApiList<T = Json>(
   path: string,
   opts: GlApiOptions = {},
 ): Promise<GlListResult<T>> {
-  const result = await run([...buildApiArgs(path, opts), "-i"], opts.ctx);
+  const result = await runApi(path, opts, ["-i"]);
   if (result.stderr === "ENOENT") throw glNotInstalledError();
   if (result.stderr === "E2BIG") throw argumentTooLargeError();
   if (result.exitCode !== 0)
@@ -209,7 +251,7 @@ export async function glRaw(
   path: string,
   opts: GlApiOptions = {},
 ): Promise<string> {
-  const result = await run(buildApiArgs(path, opts), opts.ctx);
+  const result = await runApi(path, opts);
   if (result.stderr === "ENOENT") throw glNotInstalledError();
   if (result.stderr === "E2BIG") throw argumentTooLargeError();
   if (result.exitCode !== 0)
@@ -222,7 +264,7 @@ export async function glApiResult(
   path: string,
   opts: GlApiOptions = {},
 ): Promise<ExecResult> {
-  const result = await run(buildApiArgs(path, opts), opts.ctx);
+  const result = await runApi(path, opts);
   if (result.stderr === "ENOENT") throw glNotInstalledError();
   if (result.stderr === "E2BIG") throw argumentTooLargeError();
   return result;

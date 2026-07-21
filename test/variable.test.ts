@@ -158,7 +158,9 @@ describe("variable set", () => {
     expect(call[0]).toBe(`projects/${PID}/variables`);
     expect(call[1].method).toBe("POST");
     expect(call[1].rawFields).toContain("key=NODE_ENV");
-    expect(call[1].rawFields).toContain("value=production");
+    // Shared with `secret set`, so the value stays off the child's argv here too.
+    expect(call[1].stdinField).toEqual({ name: "value", value: "production" });
+    expect(call[1].rawFields).not.toContain("value=production");
     expect(call[1].rawFields).toContain("environment_scope=*");
     expect(call[1].fields).toContain("masked=false");
     expect(call[1].fields).toContain("protected=false");
@@ -180,8 +182,8 @@ describe("variable set", () => {
     const call = glApiMock.mock.calls[0];
     expect(call[0]).toContain(`projects/${PID}/variables/NODE_ENV`);
     expect(call[1].method).toBe("PUT");
-    expect(call[1].rawFields).toContain("value=staging");
-    expect(call[1].rawFields).not.toContain("key=NODE_ENV");
+    expect(call[1].stdinField).toEqual({ name: "value", value: "staging" });
+    expect(call[1].rawFields ?? []).not.toContain("key=NODE_ENV");
     expect(out).toContain("updated");
   });
 
