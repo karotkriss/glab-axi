@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- New `snippet` command for multi-file personal snippets: `snippet list`, `snippet view <id>` (with `--file <name>` to print one file's raw content), `snippet create`, `snippet edit <id>` (`--file name=@path|name=@-|name=text` to create or update files, `--delete-file <name>` to remove one, plus `--title`/`--description`/`--visibility`), and `snippet delete <id>`. Multi-file create and edit send GitLab's `files[]` change set as a real JSON request body, which `-f`/`-F` form fields cannot express - a re-sync of several files is one atomic edit. It is host-scoped (addressed by the snippet's global id via `-R`/`--host`/remote), not project-scoped.
+- New `upload <file>` command for embedding evidence in issues and merge requests: it uploads a file to the project (POST `/projects/:id/uploads`) and returns the markdown snippet that embeds it, plus the url and alt text. It is binary-safe (unlike `repo create-file`) and reads from a path or, with `--name`, from stdin. This removes the need to fall back to a raw `curl` call carrying the token on the command line.
+- New `runner` command for runner introspection: `runner list` shows the runners available to a project (id, description, type, online, paused, status), filterable by `--status`/`--type`/`--tag-list`/`--paused`; `runner view <id>` adds the runner's tags, `run_untagged`, access level, platform, version, and last-contact time. Both state plainly that the executor type (docker/shell/...) is not exposed by the REST API and point at a job log's "Preparing the X executor" line, rather than omitting the gap silently.
+- New `ci lint [path]` command to validate a `.gitlab-ci.yml` against the project (POST `/projects/:id/ci/lint`) without running a pipeline, so a config whose jobs only run post-merge can be proven valid on a branch. It reports `valid: yes/no` with any errors and warnings, exits non-zero when invalid so a script can gate on it, prints the fully-expanded config with `--merged`, and reads the config from a path (default `.gitlab-ci.yml`) or stdin (`-`).
+- `mr checks` and `mr view --reviews` now report `pipeline_blocks_merge` (yes/no), read from the project's `only_allow_merge_if_pipeline_succeeds` setting, so the consequence of a red pipeline - blocking versus merely advisory - is derivable without a separate raw `api` round trip. A read that fails renders `unavailable - <reason>`, never a guessed answer.
+
+### Fixed
+
+- `mr merge` now reports a 401 on the merge itself as `FORBIDDEN` (the authenticated account lacks merge rights on the protected target branch) instead of `AUTH_REQUIRED`, when the reads in the same command already worked. The token is re-confirmed by naming the account, and the branch is only called "protected" when a `protected_branches` read confirms it. A permission denial no longer sends the caller into a re-authentication loop that cannot fix it.
+- A host-less `-R group/project` no longer silently answers about the wrong instance. Its host is resolved from the current directory's own GitLab remote, keeping the named project; when the current directory is not a GitLab repository (so no host can be inferred), it errors and points at `-R host/group/project`, `--host`, or `GITLAB_HOST` rather than defaulting to some other host with exit 0.
+- Host targeting is now deterministic: every `glab api` call passes `--hostname`, the only host selector the wrapped CLI honours unconditionally. Previously the host was set only through `GITLAB_HOST`, which a current-directory git remote pointing at another authenticated instance silently overrode - so a request meant for one instance could answer from another. `mr merge` also resolves its target the same way the read commands do (a bare IID or a full MR URL), so merge and the reads can never diverge on which project or host they hit.
+
 ## [0.6.0] - 2026-07-20
 
 ### Added
