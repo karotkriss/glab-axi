@@ -97,37 +97,49 @@ async function machineOutput(
   return renderMachine(result.stdout, flags);
 }
 
-const MR_URL_RE = /\/-\/merge_requests\/(\d+)/;
+const MR_URL_RE =
+  /^https?:\/\/([^/]+)\/(.+?)\/-\/merge_requests\/(\d+)(?:[/?#].*)?$/;
 
 /** Extract {host, project} from a full MR URL, or undefined if it isn't one. */
-function parseMrUrl(raw: string): RepoContext | undefined {
-  const m = raw.match(/^https?:\/\/([^/]+)\/(.+?)\/-\/merge_requests\/\d+/);
+function parseMrUrl(
+  raw: string,
+): { iid: number; ctx: RepoContext } | undefined {
+  const m = raw.match(MR_URL_RE);
   if (!m) return undefined;
-  return { host: m[1], project: m[2], source: "flag" };
+  return {
+    iid: Number(m[3]),
+    ctx: { host: m[1], project: m[2], source: "flag" },
+  };
 }
 
 /**
  * Resolve the MR reference from args: a bare IID, or a full MR URL
  * (https://<host>/<group>/<project>/-/merge_requests/<iid>). A URL also carries
  * its own host/project, which targets the request unless an explicit `-R` flag
- * was given (precedence: `-R` flag > URL > git remote).
+ * was given. An explicit `--host` overrides only the host (project precedence:
+ * `-R` flag > URL > git remote).
  */
 function resolveMrRef(
   args: string[],
   ctx?: RepoContext,
 ): { iid: number; ctx?: RepoContext } {
-  const urlIdx = args.findIndex((a) => MR_URL_RE.test(a));
+  const urlIdx = args.findIndex((a) => parseMrUrl(a) !== undefined);
   if (urlIdx !== -1) {
     const raw = args.splice(urlIdx, 1)[0];
-    const iid = Number(raw.match(MR_URL_RE)![1]);
     const fromUrl = parseMrUrl(raw);
+    if (!fromUrl) {
+      throw new AxiError(
+        `Invalid merge request URL: ${raw}`,
+        "VALIDATION_ERROR",
+      );
+    }
     const target =
       ctx?.source === "flag" && ctx.project
         ? ctx
-        : fromUrl && ctx?.source === "flag" && ctx.host
-          ? { ...fromUrl, host: ctx.host }
-          : (fromUrl ?? ctx);
-    return { iid, ctx: target };
+        : ctx?.hostSource === "flag" && ctx.host
+          ? { ...fromUrl.ctx, host: ctx.host, hostSource: "flag" as const }
+          : fromUrl.ctx;
+    return { iid: fromUrl.iid, ctx: target };
   }
   return { iid: takeNumber(args, "merge request"), ctx };
 }

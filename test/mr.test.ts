@@ -260,7 +260,11 @@ describe("mr merge", () => {
     );
     await mrCommand(
       ["merge", "https://gitlab.example.com/team/app/-/merge_requests/7"],
-      { host: "override.example.com", source: "flag" },
+      {
+        host: "override.example.com",
+        source: "flag",
+        hostSource: "flag",
+      },
     );
     expect(glApiMock.mock.calls[0][0]).toBe(
       `projects/${encodeURIComponent("team/app")}/merge_requests/7`,
@@ -269,6 +273,38 @@ describe("mr merge", () => {
       host: "override.example.com",
       project: "team/app",
     });
+  });
+
+  it("keeps an explicit host override when the project came from git", async () => {
+    glApiMock.mockResolvedValueOnce(
+      mr({ iid: 7, state: "merged", merged_by: { username: "alice" } }),
+    );
+    await mrCommand(
+      ["merge", "https://gitlab.example.com/team/app/-/merge_requests/7"],
+      {
+        host: "override.example.com",
+        project: "cwd/project",
+        source: "git",
+        hostSource: "flag",
+      },
+    );
+    expect(glApiMock.mock.calls[0][0]).toBe(
+      `projects/${encodeURIComponent("team/app")}/merge_requests/7`,
+    );
+    expect(glApiMock.mock.calls[0][1].ctx).toMatchObject({
+      host: "override.example.com",
+      project: "team/app",
+    });
+  });
+
+  it("rejects a URL-like reference without a scheme before merging", async () => {
+    await expect(
+      mrCommand(
+        ["merge", "gitlab.example.com/team/app/-/merge_requests/7"],
+        ctx,
+      ),
+    ).rejects.toThrow("Missing merge request number");
+    expect(glApiMock).not.toHaveBeenCalled();
   });
 
   it("is idempotent when already merged", async () => {

@@ -234,6 +234,7 @@ describe("resolveRepo with --host (Option C)", () => {
     expect(resolveRepo(undefined, "dev.example.gy")).toEqual({
       host: "dev.example.gy",
       source: "flag",
+      hostSource: "flag",
     });
   });
 
@@ -242,6 +243,18 @@ describe("resolveRepo with --host (Option C)", () => {
       host: "dev.example.gy",
       project: "group/project",
       source: "flag",
+      hostSource: "flag",
+    });
+  });
+
+  it("records --host separately when it overrides a git project", () => {
+    execMock.mockReturnValue("git@gitlab.com:cwd/project.git\n");
+    configuredHosts("gitlab.com");
+    expect(resolveRepo(undefined, "dev.example.gy")).toEqual({
+      host: "dev.example.gy",
+      project: "cwd/project",
+      source: "git",
+      hostSource: "flag",
     });
   });
 

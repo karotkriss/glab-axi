@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
-import { glApi, glRaw, type Json } from "../gl.js";
+import { glApi, glApiList, glRaw, type Json } from "../gl.js";
 import { AxiError } from "../errors.js";
 import type { RepoContext } from "../context.js";
+import { formatCountLine } from "../format.js";
 import { refuseSubcommand } from "../refusals.js";
 import { takeFlag, takeAllFlags, takeNumber, parseLimit } from "../args.js";
 import {
@@ -167,8 +168,10 @@ function validateVisibility(v: string | undefined): string | undefined {
 
 async function snippetList(args: string[], ctx?: RepoContext): Promise<string> {
   const limit = parseLimit(takeFlag(args, "--limit"), 30);
-  const snippets = await glApi<Json[]>(`snippets?per_page=${limit}`, { ctx });
-  const items = snippets ?? [];
+  const { data: items, total: totalCount } = await glApiList<Json>(
+    `snippets?per_page=${limit}`,
+    { ctx },
+  );
   if (items.length === 0) {
     return renderOutput([
       "snippets: 0 snippets found",
@@ -178,7 +181,7 @@ async function snippetList(args: string[], ctx?: RepoContext): Promise<string> {
     ]);
   }
   return renderOutput([
-    `count: ${items.length}`,
+    formatCountLine({ count: items.length, limit, totalCount }),
     renderList("snippets", items, listSchema),
     renderHelp(["Run `glab-axi snippet view <id>` to see a snippet's files"]),
   ]);

@@ -14,6 +14,8 @@ export interface RepoContext {
   project?: string;
   /** How the project was resolved. */
   source: "flag" | "git";
+  /** Set when --host independently overrides the project's resolved host. */
+  hostSource?: "flag";
 }
 
 /**
@@ -46,8 +48,10 @@ export function resolveRepo(
   if (host) {
     // Explicit --host wins over the env, and stands alone as a host-only
     // context when nothing else resolved a project.
-    if (ctx) ctx.host = host;
-    else ctx = { host, source: "flag" };
+    if (ctx) {
+      ctx.host = host;
+      ctx.hostSource = "flag";
+    } else ctx = { host, source: "flag", hostSource: "flag" };
   }
   // A `-R group/project` that named a project but no host has an ambiguous host:
   // nothing in the flag says which instance, so glab would silently pick one
