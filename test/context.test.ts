@@ -274,6 +274,66 @@ describe("resolveRepo with --host (Option C)", () => {
   });
 });
 
+// A host-less `-R group/project` used to leave the host undefined, letting glab
+// silently pick one from the current directory's own git remote (or default to
+// gitlab.com) - answering about the wrong instance with exit 0 (issue #43).
+describe("resolveRepo with a host-less -R (issue #43)", () => {
+  beforeEach(() => {
+    execMock.mockReset();
+    configMock.mockReset();
+    configured("gitlab.example.com");
+    delete process.env["GITLAB_HOST"];
+  });
+
+  afterEach(() => {
+    delete process.env["GITLAB_HOST"];
+  });
+
+  it("resolves the host from the current directory's GitLab remote, keeping the named project", () => {
+    execMock.mockReturnValue(
+      "git@gitlab.example.com:cwd-group/cwd-project.git\n",
+    );
+    configuredHosts("gitlab.example.com");
+
+    expect(resolveRepo("group/project")).toEqual({
+      host: "gitlab.example.com",
+      project: "group/project", // the NAMED project, not the cwd's
+      source: "flag",
+    });
+  });
+
+  it("errors when no host is given and the cwd is not a GitLab repository", () => {
+    execMock.mockImplementation(() => {
+      throw new Error("no origin");
+    });
+    expect(() => resolveRepo("group/project")).toThrow(
+      /names a project but no host/,
+    );
+  });
+
+  it("errors when the cwd remote is a non-GitLab host, rather than silently defaulting", () => {
+    execMock.mockReturnValue("git@github.com:owner/repo.git\n");
+    configuredHosts("gitlab.example.com"); // github.com is not configured
+
+    expect(() => resolveRepo("group/project")).toThrow(
+      /names a project but no host/,
+    );
+  });
+
+  it("still honours GITLAB_HOST for a host-less -R without touching the cwd", () => {
+    process.env["GITLAB_HOST"] = "gitlab.example.com";
+    execMock.mockImplementation(() => {
+      throw new Error("cwd should not be consulted");
+    });
+
+    expect(resolveRepo("group/project")).toEqual({
+      host: "gitlab.example.com",
+      project: "group/project",
+      source: "flag",
+    });
+  });
+});
+
 describe("parseRemoteUrl", () => {
   // Stays a pure parser: host validation belongs at the resolution boundary,
   // so this keeps answering "what does this URL say" for any host.
