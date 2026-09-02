@@ -16,10 +16,10 @@ export interface SuggestionCtx {
 }
 
 /**
- * Reconstruct a `-R` target string for carry-forward in suggestions.
+ * Reconstruct the explicit target selector for carry-forward in suggestions.
  *
  * Append this at the END of a suggested command, never straight after the
- * binary name: `-R` must follow the command word, and the pre-command form
+ * binary name: target flags must follow the command word, and the pre-command form
  * (`glab-axi -R host/group/project issue list`) is rejected by our own parser.
  * A suggestion that errors is worse than no suggestion at all.
  */
@@ -32,6 +32,7 @@ export function repoFlag(c: SuggestionCtx): string {
     const target = r.host ? `${r.host}/${r.project}` : r.project;
     return ` -R ${target}`;
   }
+  if (r?.hostSource === "flag" && r.host) return ` --host ${r.host}`;
   return "";
 }
 

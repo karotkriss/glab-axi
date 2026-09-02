@@ -729,6 +729,7 @@ describe("ci lint", () => {
     const path = config("build:\n  script: echo hi\n");
     const out = await ciCommand(["lint", path], ctx);
     expect(out).toContain("valid: yes");
+    expect(out).toContain("-R gitlab.example.com/group/project");
     // Posts to the project's ci/lint endpoint...
     const [callPath, opts] = glApiMock.mock.calls[0];
     expect(callPath).toContain(`projects/${PID}/ci/lint`);
@@ -749,6 +750,7 @@ describe("ci lint", () => {
     const out = await ciCommand(["lint", path], ctx);
     expect(out).toContain("valid: no");
     expect(out).toContain("unknown keys");
+    expect(out).toContain("-R gitlab.example.com/group/project");
     expect(process.exitCode).toBe(1);
   });
 

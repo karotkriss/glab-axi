@@ -131,4 +131,21 @@ describe("suggestions", () => {
     });
     for (const line of lines) expect(line).not.toContain("-R");
   });
+
+  it("carries an explicit host override forward from a git project", () => {
+    const lines = getSuggestions({
+      domain: "issue",
+      action: "list",
+      isEmpty: false,
+      repo: {
+        ...repo,
+        host: "gitlab.example.com",
+        source: "git",
+        hostSource: "flag",
+      },
+    });
+    for (const line of lines) {
+      expect(line).toContain(" --host gitlab.example.com");
+    }
+  });
 });

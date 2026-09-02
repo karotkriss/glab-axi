@@ -857,10 +857,10 @@ async function ciLint(args: string[], ctx?: RepoContext): Promise<string> {
     renderHelp(
       valid
         ? [
-            "The config is valid - run `glab-axi ci run --ref <branch>` to trigger a pipeline",
+            `The config is valid - run \`glab-axi ci run --ref <branch>${repoFlag({ domain: "ci", action: "lint", repo: ctx })}\` to trigger a pipeline`,
           ]
         : [
-            "Fix the errors above, then re-run `glab-axi ci lint` to re-validate",
+            `Fix the errors above, then re-run \`glab-axi ci lint${repoFlag({ domain: "ci", action: "lint", repo: ctx })}\` to re-validate`,
           ],
     ),
   );

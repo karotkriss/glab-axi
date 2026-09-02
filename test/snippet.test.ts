@@ -31,6 +31,12 @@ afterEach(() => {
 });
 
 describe("snippet list", () => {
+  it("keeps the selected host in its empty-state create command", async () => {
+    glApiListMock.mockResolvedValueOnce({ data: [], total: 0 });
+    const out = await snippetCommand(["list"], ctx);
+    expect(out).toContain("--host gitlab.example.com");
+  });
+
   it("reports the verified total when the first page is truncated", async () => {
     glApiListMock.mockResolvedValueOnce({
       data: Array.from({ length: 30 }, (_, index) => ({
@@ -42,6 +48,7 @@ describe("snippet list", () => {
     const out = await snippetCommand(["list", "--limit", "30"], ctx);
     expect(glApiListMock).toHaveBeenCalledWith("snippets?per_page=30", { ctx });
     expect(out).toContain("count: 30 of 42 total");
+    expect(out).toContain("--host gitlab.example.com");
   });
 });
 
@@ -82,6 +89,7 @@ describe("snippet create", () => {
       { file_path: "README.md", content: "# Installer" },
     ]);
     expect(out).toContain("id: 25");
+    expect(out).toContain("--host gitlab.example.com");
   });
 
   it("requires a title and at least one file", async () => {
@@ -119,6 +127,7 @@ describe("snippet view", () => {
     const out = await snippetCommand(["view", "13"], ctx);
     expect(out).toContain("install.sh");
     expect(out).toContain("README.md");
+    expect(out).toContain("--host gitlab.example.com");
     expect(glRawMock).not.toHaveBeenCalled();
   });
 
@@ -156,7 +165,7 @@ describe("snippet edit", () => {
     const f = join(dir, "install.sh");
     writeFileSync(f, "echo v2\n");
 
-    await snippetCommand(
+    const out = await snippetCommand(
       [
         "edit",
         "13",
@@ -177,6 +186,7 @@ describe("snippet edit", () => {
       { action: "create", file_path: "new.sh", content: "echo new" },
       { action: "delete", file_path: "old.sh" },
     ]);
+    expect(out).toContain("--host gitlab.example.com");
   });
 
   it("refuses to delete a file the snippet does not have", async () => {
@@ -190,6 +200,14 @@ describe("snippet edit", () => {
     await expect(snippetCommand(["edit", "13"], ctx)).rejects.toThrow(
       "No changes provided",
     );
+  });
+});
+
+describe("snippet delete", () => {
+  it("keeps the selected host in its follow-up command", async () => {
+    glApiMock.mockResolvedValueOnce({});
+    const out = await snippetCommand(["delete", "13"], ctx);
+    expect(out).toContain("--host gitlab.example.com");
   });
 });
 

@@ -1,6 +1,7 @@
 import { glApi, glApiList, requireProject, type Json } from "../gl.js";
 import type { RepoContext } from "../context.js";
 import { formatCountLine } from "../format.js";
+import { repoFlag } from "../suggestions.js";
 import { refuseSubcommand } from "../refusals.js";
 import { takeFlag, takeNumber, parseLimit } from "../args.js";
 import {
@@ -100,7 +101,7 @@ async function runnerList(args: string[], ctx?: RepoContext): Promise<string> {
     return renderOutput([
       "runners: 0 runners found",
       renderHelp([
-        "Run `glab-axi api runners/all` to list every runner on the instance (requires admin)",
+        `Run \`glab-axi api runners/all${repoFlag({ domain: "runner", action: "list", repo: ctx })}\` to list every runner on the instance (requires admin)`,
       ]),
     ]);
   }
@@ -108,7 +109,7 @@ async function runnerList(args: string[], ctx?: RepoContext): Promise<string> {
     formatCountLine({ count: items.length, limit, totalCount }),
     renderList("runners", items, listSchema),
     renderHelp([
-      "Run `glab-axi runner view <id>` for a runner's tags and detail",
+      `Run \`glab-axi runner view <id>${repoFlag({ domain: "runner", action: "list", repo: ctx })}\` for a runner's tags and detail`,
     ]),
   ]);
 }
