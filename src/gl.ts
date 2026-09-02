@@ -40,6 +40,18 @@ export interface GlApiOptions {
    * Only one field can come from stdin, since there is only one stdin.
    */
   stdinField?: { name: string; value: string };
+  /**
+   * A raw request body fed to the child on stdin via glab's `--input -`, with
+   * its own Content-Type header. This is the escape hatch for a body that `-f`/
+   * `-F` form fields cannot express: a nested JSON array (a snippet's `files[]`,
+   * `ci lint`'s content) or a multipart file part (`uploads`). glab forwards the
+   * bytes verbatim, so the caller owns the encoding - JSON text, or a
+   * pre-assembled multipart/form-data Buffer. In `--input` mode glab serializes
+   * any `-f`/`-F` flags into URL query parameters, so do not combine `body` with
+   * form fields meant for the body. Shares the child's stdin with `stdinField`,
+   * so the two are mutually exclusive.
+   */
+  body?: { content: string | Buffer; contentType: string };
   /** Extra HTTP headers: glab -H key:value. */
   headers?: string[];
   paginate?: boolean;
@@ -84,11 +96,24 @@ function envFor(ctx?: RepoContext): NodeJS.ProcessEnv {
  */
 function buildApiArgs(path: string, opts: GlApiOptions): string[] {
   const args = ["api", path, "--method", (opts.method ?? "GET").toUpperCase()];
+  // Target the host explicitly with `--hostname`. GITLAB_HOST (set via envFor)
+  // is NOT authoritative: when the process runs inside a git directory whose
+  // own remote points at an authenticated GitLab host, that host silently wins
+  // over GITLAB_HOST, so a call meant for one instance answers from another
+  // with exit 0 (verified against glab 1.53.0). `--hostname` is the only host
+  // selector glab honours unconditionally, so it is what makes targeting
+  // deterministic regardless of the current directory.
+  if (opts.ctx?.host) args.push("--hostname", opts.ctx.host);
   for (const f of opts.fields ?? []) args.push("-F", f);
   for (const f of opts.rawFields ?? []) args.push("-f", f);
   // The name is safe to put on argv; only the value is withheld, and `@-`
   // tells the child to read it from the stdin `run` writes.
   if (opts.stdinField) args.push("-F", `${opts.stdinField.name}=@-`);
+  // A raw body is read from the same stdin, so `body` and `stdinField` never
+  // coexist. glab does not set a Content-Type for `--input`, so we always do.
+  if (opts.body) {
+    args.push("--input", "-", "-H", `Content-Type: ${opts.body.contentType}`);
+  }
   for (const h of opts.headers ?? []) args.push("-H", h);
   if (opts.paginate) args.push("--paginate");
   return args;
@@ -107,7 +132,7 @@ function runApi(
   return run(
     [...buildApiArgs(path, opts), ...extraArgs],
     opts.ctx,
-    opts.stdinField?.value,
+    opts.body?.content ?? opts.stdinField?.value,
   );
 }
 
@@ -124,7 +149,7 @@ export function errorBody(result: ExecResult): string {
 function run(
   args: string[],
   ctx?: RepoContext,
-  input?: string,
+  input?: string | Buffer,
 ): Promise<ExecResult> {
   return new Promise((resolve) => {
     const child = execFile(
@@ -323,7 +348,7 @@ export function glConfigGetResult(key: string, host?: string): string | null {
  */
 function writeStdin(
   child: { stdin?: NodeJS.WritableStream | null },
-  input: string,
+  input: string | Buffer,
 ): void {
   child.stdin?.on("error", () => {});
   child.stdin?.end(input);
