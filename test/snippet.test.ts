@@ -6,25 +6,43 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // Mock the gl executor so no real glab/network is touched.
 vi.mock("../src/gl.js", () => ({
   glApi: vi.fn(),
+  glApiList: vi.fn(),
   glRaw: vi.fn(),
 }));
 
 import { snippetCommand } from "../src/commands/snippet.js";
-import { glApi, glRaw } from "../src/gl.js";
+import { glApi, glApiList, glRaw } from "../src/gl.js";
 import type { RepoContext } from "../src/context.js";
 
 const glApiMock = glApi as unknown as ReturnType<typeof vi.fn>;
+const glApiListMock = glApiList as unknown as ReturnType<typeof vi.fn>;
 const glRawMock = glRaw as unknown as ReturnType<typeof vi.fn>;
 const ctx: RepoContext = { host: "gitlab.example.com", source: "flag" };
 
 let dir: string;
 beforeEach(() => {
   glApiMock.mockReset();
+  glApiListMock.mockReset();
   glRawMock.mockReset();
   dir = mkdtempSync(join(tmpdir(), "glab-axi-snippet-test-"));
 });
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
+});
+
+describe("snippet list", () => {
+  it("reports the verified total when the first page is truncated", async () => {
+    glApiListMock.mockResolvedValueOnce({
+      data: Array.from({ length: 30 }, (_, index) => ({
+        id: index + 1,
+        title: `Snippet ${index + 1}`,
+      })),
+      total: 42,
+    });
+    const out = await snippetCommand(["list", "--limit", "30"], ctx);
+    expect(glApiListMock).toHaveBeenCalledWith("snippets?per_page=30", { ctx });
+    expect(out).toContain("count: 30 of 42 total");
+  });
 });
 
 describe("snippet create", () => {
