@@ -228,6 +228,31 @@ function buildReviewSummary(
   };
 }
 
+/**
+ * Whether a red pipeline actually blocks merging on this project, read from its
+ * `only_allow_merge_if_pipeline_succeeds` setting. `mr checks` computes the
+ * pipeline verdict but the verdict's *consequence* lives in this project
+ * setting, so without it a red pipeline could be blocking or merely advisory and
+ * the caller cannot tell which.
+ *
+ * Returns "yes"/"no", or "unavailable - <reason>" when the setting could not be
+ * read - never a guessed "no", per the never-report-unverified-state rule.
+ */
+async function readPipelineBlocksMerge(ctx?: RepoContext): Promise<string> {
+  const res = await glApiResult(`projects/${projectId(ctx)}`, { ctx });
+  if (res.exitCode !== 0) {
+    return "unavailable - could not read the project's merge settings";
+  }
+  try {
+    const project = JSON.parse(res.stdout);
+    const v = project?.only_allow_merge_if_pipeline_succeeds;
+    if (typeof v !== "boolean") return "unavailable - setting not reported";
+    return v ? "yes" : "no";
+  } catch {
+    return "unavailable - unexpected response";
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Schemas
 // ---------------------------------------------------------------------------
@@ -316,11 +341,11 @@ function viewSchema(full: boolean, includeComments: boolean): FieldDef[] {
 
 export const MR_HELP = `usage: glab-axi mr <subcommand> [flags]
 subcommands[10]:
-  list, view <iid|url>, create, update <iid>, merge <iid>, approve <iid>, unapprove <iid>, checks <iid|url>, diff <iid|url>, comment <iid>
+  list, view <iid|url>, create, update <iid>, merge <iid|url>, approve <iid>, unapprove <iid>, checks <iid|url>, diff <iid|url>, comment <iid>
 flags{list}:
   --state <opened|closed|merged|all>, --source-branch/--head <b>, --target-branch/--base <b>, --label, --author <user>, --assignee <user>, --milestone <name>, --draft!, --limit <n> (default 30), --fields <a,b,c>, --json!/--raw! (raw JSON), --jq <expr> (jq filter over raw JSON)
 flags{view}:
-  --comments! (include discussion notes), --reviews! (approvals + thread resolution), --full! (head SHA, merge status, pipeline, full body), --json!/--raw! (raw JSON), --jq <expr> (jq filter over raw JSON); accepts an MR URL in place of the iid
+  --comments! (include discussion notes), --reviews! (approvals + thread resolution + whether a red pipeline blocks merge), --full! (head SHA, merge status, pipeline, full body), --json!/--raw! (raw JSON), --jq <expr> (jq filter over raw JSON); accepts an MR URL in place of the iid
 flags{diff}:
   --full! (complete unified diff instead of the per-file summary); accepts an MR URL in place of the iid
 flags{create}:
@@ -328,15 +353,15 @@ flags{create}:
 flags{update,edit}:
   --title, --body or --body-file, --label, --milestone <name>, --assignee <user>, --target-branch, --ready! (clear Draft), --draft! (mark Draft), --close!, --reopen!
 flags{merge}:
-  --method <merge|squash|rebase>, --merge!, --squash!, --rebase!, --auto! (merge when the pipeline succeeds), --remove-source-branch!/--delete-branch!, --body or --body-file (merge commit message)
+  --method <merge|squash|rebase>, --merge!, --squash!, --rebase!, --auto! (merge when the pipeline succeeds), --remove-source-branch!/--delete-branch!, --body or --body-file (merge commit message); accepts an MR URL in place of the iid
 flags{approve,unapprove}:
   (none) - GitLab models review as an approval plus discussion threads, so there is no \`mr review\`: approve/unapprove for the verdict, comment for feedback
 flags{checks}:
-  (none) - prints the MR pipeline's aggregate pass/fail/running counts + verdict, plus a stuck section for any pending job no active runner can take
+  (none) - prints the MR pipeline's aggregate pass/fail/running counts + verdict, a pipeline_blocks_merge line (whether a red pipeline actually blocks this merge), plus a stuck section for any pending job no active runner can take; accepts an MR URL in place of the iid
 flags{comment}:
   --body <text> or --body-file <path> (required)
 notes:
-  merge diagnoses a refusal (conflicts, draft, unresolved discussions, missing approvals, a pending pipeline, etc.) instead of passing through GitLab's opaque error, and suggests the command that clears it.
+  merge diagnoses a refusal (conflicts, draft, unresolved discussions, missing approvals, a pending pipeline, etc.) instead of passing through GitLab's opaque error, and suggests the command that clears it. A 401 on the merge itself, when reads work, is reported as FORBIDDEN (the account lacks merge rights on the protected target branch) rather than AUTH_REQUIRED, since no re-authentication can fix it.
 examples:
   glab-axi mr list --state all --head feature-1 --limit 1
   glab-axi mr view 42 --full
@@ -452,6 +477,10 @@ async function mrView(args: string[], ctx?: RepoContext): Promise<string> {
       { ctx: target },
     );
     const summary = buildReviewSummary(approvals, discussions ?? []);
+    // Whether the pipeline result actually gates this merge (project setting),
+    // so the review summary states the consequence of a red pipeline, not just
+    // the approvals and threads.
+    summary.pipeline_blocks_merge = await readPipelineBlocksMerge(target);
     schema.push(custom("reviews", () => summary));
   }
   return renderOutput([
@@ -788,20 +817,76 @@ function mergeBlocker(
 }
 
 /**
+ * A 401 on the merge PUT, after the reads in this same command already
+ * succeeded, is a permission denial - not an authentication problem. The token
+ * plainly works (it just answered the idempotency GET), so no re-auth can grant
+ * the missing merge rights on a protected target branch. `mapGlError` can only
+ * see the bare 401 and maps it to AUTH_REQUIRED, sending the caller down a
+ * re-auth path that cannot succeed; only here do we know the reads worked, so
+ * only here can the code be corrected to FORBIDDEN.
+ *
+ * The token is re-confirmed by naming the account (`GET /user`): if even that
+ * 401s, it really is an auth failure and AUTH_REQUIRED is kept. The branch is
+ * only called "protected" when a `protected_branches` read confirms it, never on
+ * assumption (the never-report-unverified-state rule).
+ */
+async function diagnoseMergeForbidden(
+  mr: Json,
+  iid: number,
+  ctx: RepoContext | undefined,
+  view: string,
+): Promise<AxiError | undefined> {
+  const who = await glApiResult("user", { ctx });
+  if (who.exitCode !== 0) return undefined; // token genuinely not working
+  let account = "the authenticated account";
+  try {
+    const parsed = JSON.parse(who.stdout);
+    if (parsed?.username) account = parsed.username;
+  } catch {
+    /* keep the generic label */
+  }
+  const target = String(mr.target_branch ?? "the target branch");
+  const protectedRes = mr.target_branch
+    ? await glApiResult(
+        `projects/${projectId(ctx)}/protected_branches/${encodeURIComponent(String(mr.target_branch))}`,
+        { ctx },
+      )
+    : { exitCode: 1, stdout: "", stderr: "" };
+  const isProtected = protectedRes.exitCode === 0;
+  const reason = isProtected
+    ? `account ${account} lacks merge rights on protected branch ${target}`
+    : `account ${account} is not permitted to merge into ${target}`;
+  return new AxiError(
+    `Merge request !${iid} cannot be merged: ${reason}`,
+    "FORBIDDEN",
+    [
+      isProtected
+        ? `Ask a user with merge access to ${target} to merge it, or have a maintainer grant ${account} merge rights on that protected branch`
+        : `Ask a user with permission to merge into ${target} to merge it`,
+      view,
+    ],
+  );
+}
+
+/**
  * Replace GitLab's untranslated "Branch cannot be merged" with the cause the
  * merge request itself reported. `mr merge` GETs the MR before merging for its
  * idempotency check, so the diagnosis costs no extra call - and an error with no
  * resolving suggestion is the clause 9 failure, so even an unnamed cause gets a
  * command that shows the agent where to look.
  */
-function explainMergeFailure(
+async function explainMergeFailure(
   err: unknown,
   mr: Json,
   iid: number,
   ctx?: RepoContext,
-): unknown {
+): Promise<unknown> {
   if (!(err instanceof AxiError)) return err;
   const view = `Run \`glab-axi mr view ${iid} --full${repoFlag({ domain: "mr", action: "merge", repo: ctx })}\` to see merge_status, conflicts, and pipeline state`;
+  if (err.code === "AUTH_REQUIRED") {
+    const forbidden = await diagnoseMergeForbidden(mr, iid, ctx, view);
+    if (forbidden) return forbidden;
+  }
   const blocker = mergeBlocker(mr, iid, ctx);
   if (!blocker) {
     return new AxiError(err.message, err.code, [...err.suggestions, view]);
@@ -823,7 +908,13 @@ async function mrMerge(args: string[], ctx?: RepoContext): Promise<string> {
     takeBoolFlag(args, "--delete-branch");
   const auto = takeBoolFlag(args, "--auto");
   const body = takeBody(args);
-  const iid = takeNumber(args, "merge request");
+  // Resolve the MR reference the same way the read paths do (a bare IID or a
+  // full MR URL that carries its own host/project), so `mr merge` and `mr view`
+  // never diverge on which project/host a request targets. Reassigning ctx to
+  // the resolved target keeps the rest of this function unchanged.
+  const ref = resolveMrRef(args, ctx);
+  const iid = ref.iid;
+  ctx = ref.ctx;
   if (shorthand.length > 1) {
     throw new AxiError(
       "Choose only one merge method: --merge, --squash, or --rebase",
@@ -910,7 +1001,7 @@ async function mrMerge(args: string[], ctx?: RepoContext): Promise<string> {
       ctx,
     });
   } catch (err) {
-    throw explainMergeFailure(err, mergeSnapshot, iid, ctx);
+    throw await explainMergeFailure(err, mergeSnapshot, iid, ctx);
   }
   const help = renderHelp(
     getSuggestions({ domain: "mr", action: "merge", id: iid, repo: ctx }),
@@ -1085,14 +1176,18 @@ async function mrChecks(args: string[], ctx?: RepoContext): Promise<string> {
   const help = renderHelp(
     getSuggestions({ domain: "mr", action: "checks", id: iid, repo: target }),
   );
+  // Whether a red pipeline actually blocks this MR's merge (project setting), so
+  // the verdict's consequence is derivable from `mr checks` alone.
+  const blocksLine = `pipeline_blocks_merge: ${await readPipelineBlocksMerge(target)}`;
   if (!pipeline) {
     return renderOutput([
       `checks: no pipeline found for merge request ${iid}`,
+      blocksLine,
       help,
     ]);
   }
   const jobs = await fetchJobs(pipeline.id, target);
-  return renderOutput([await renderSummary(jobs, target), help]);
+  return renderOutput([await renderSummary(jobs, target), blocksLine, help]);
 }
 
 /**
