@@ -49,7 +49,31 @@ export function resolveRepo(
     if (ctx) ctx.host = host;
     else ctx = { host, source: "flag" };
   }
+  // A `-R group/project` that named a project but no host has an ambiguous host:
+  // nothing in the flag says which instance, so glab would silently pick one
+  // from the current directory's own git remote (or default to gitlab.com),
+  // answering about the wrong instance with exit 0. Resolve it here instead: use
+  // the current directory's GitLab host when there is one, else error - the host
+  // has to be spelled out. This only fires for a host-less `-R`; a project from
+  // the git remote already carries its host, and --host/GITLAB_HOST set it above.
+  if (ctx?.project && !ctx.host) {
+    const cwdHost = parseGitRemote()?.host;
+    if (cwdHost) ctx.host = cwdHost;
+    else throw hostlessRepoError(ctx.project);
+  }
   return ctx;
+}
+
+/** A `-R group/project` whose host is neither given nor inferable from the cwd. */
+function hostlessRepoError(project: string): AxiError {
+  return new AxiError(
+    `-R ${project} names a project but no host, and the current directory is not a GitLab repository to infer one from`,
+    "VALIDATION_ERROR",
+    [
+      `Spell out the host: -R <host>/${project}`,
+      `Or select the host explicitly with --host <host> (or GITLAB_HOST=<host>)`,
+    ],
+  );
 }
 
 /** A `-R` value that failed to parse as `[host/]group/project`. */
