@@ -1,4 +1,10 @@
-import { mkdtempSync, mkdirSync, lstatSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  lstatSync,
+  writeFileSync,
+  readFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { encode } from "@toon-format/toon";
@@ -23,6 +29,7 @@ import {
   takeAllFlags,
   takeNumber,
   parseLimit,
+  getPositional,
 } from "../args.js";
 import { sleep } from "../sleep.js";
 import {
@@ -305,10 +312,12 @@ function renderJobs(jobs: Json[]): string {
 // ---------------------------------------------------------------------------
 
 export const CI_HELP = `usage: glab-axi ci <subcommand> [flags]
-subcommands[9]:
-  list, view <id>, status, jobs <pipeline-id>, watch <pipeline-id>, log <job-id>, run, retry <pipeline-id>, cancel <pipeline-id>
+subcommands[10]:
+  list, view <id>, status, jobs <pipeline-id>, watch <pipeline-id>, log <job-id>, lint [path], run, retry <pipeline-id>, cancel <pipeline-id>
 flags{list}:
   --ref <branch>, --status <created|pending|running|success|failed|canceled|skipped|manual>, --limit <n> (default 20)
+flags{lint}:
+  --merged! (also print the fully-expanded merged YAML), --ref <branch> (validate as if on this ref); path defaults to .gitlab-ci.yml, or pass - to read the config from stdin
 flags{status}:
   --mr <iid> (pipeline for a merge request), --branch <b> (latest pipeline on a branch)
 flags{watch}:
@@ -319,6 +328,7 @@ flags{run}:
   --ref <branch|tag> (default: the project's default branch), --field <KEY=value> (pipeline variable, repeatable)
 notes:
   watch blocks until the pipeline finishes, prints the final verdict, and exits non-zero if it did not succeed.
+  lint validates a .gitlab-ci.yml against the project (POST /projects/:id/ci/lint) without running a pipeline, so a config whose jobs only run post-merge can be proven valid on a branch. It reports valid: yes/no with any errors and warnings, and exits non-zero when invalid so a script can gate on it. --merged also prints the expanded YAML with includes/extends resolved.
   run triggers a new pipeline from the project's .gitlab-ci.yml on --ref. GitLab has no workflow entity to select or dispatch (the ref determines what runs), so there is no workflow list/enable/disable here.
   cancel is a no-op (already: true) on a pipeline that already finished.
   status, view and jobs (and mr checks) add a stuck section listing any pending job no active runner can take, with the reason (e.g. no runner carries its tags). Such a job is blocked and will never start on its own, so a poller should escalate rather than keep waiting. verdict stays running, since the pipeline has not finished.
@@ -332,6 +342,8 @@ examples:
   glab-axi ci watch 12345
   glab-axi ci log 67890
   glab-axi ci run --ref main --field DEPLOY_ENV=staging
+  glab-axi ci lint
+  glab-axi ci lint .gitlab-ci.yml --merged
   glab-axi ci retry 12345
   glab-axi ci cancel 12345`;
 
@@ -762,6 +774,98 @@ async function ciRun(args: string[], ctx?: RepoContext): Promise<string> {
   ]);
 }
 
+const DEFAULT_CI_CONFIG = ".gitlab-ci.yml";
+
+/** Read the CI config to lint: from a file path, or from stdin when path is `-`. */
+function readLintContent(path: string): string {
+  if (path === "-") {
+    try {
+      return readFileSync(0, "utf8");
+    } catch {
+      throw new AxiError(
+        "No CI config was piped on stdin",
+        "VALIDATION_ERROR",
+        ["cat .gitlab-ci.yml | glab-axi ci lint -"],
+      );
+    }
+  }
+  try {
+    return readFileSync(path, "utf8");
+  } catch (err) {
+    const code =
+      err && typeof err === "object" && "code" in err
+        ? String((err as { code: unknown }).code)
+        : "UNKNOWN";
+    if (code === "ENOENT") {
+      throw new AxiError(`CI config not found: ${path}`, "VALIDATION_ERROR", [
+        `Run \`glab-axi ci lint <path>\` with the config's path, or \`glab-axi ci lint -\` to read it from stdin`,
+      ]);
+    }
+    throw new AxiError(
+      `Could not read CI config: ${path} (${code})`,
+      "VALIDATION_ERROR",
+    );
+  }
+}
+
+/**
+ * `ci lint [path]` — validate a .gitlab-ci.yml against the project without
+ * running a pipeline (POST /projects/:id/ci/lint). The config travels as a JSON
+ * body (gl.ts's raw-body mode), since it is one field but the endpoint expects
+ * JSON. An invalid config sets a non-zero exit code the way `ci watch` signals a
+ * failed pipeline - a thrown error would replace the errors[] on stdout, which
+ * are the whole point of the command.
+ */
+async function ciLint(args: string[], ctx?: RepoContext): Promise<string> {
+  const merged = takeBoolFlag(args, "--merged");
+  const ref = takeFlag(args, "--ref");
+  const path = getPositional(args, 0) ?? DEFAULT_CI_CONFIG;
+  const content = readLintContent(path);
+
+  const payload: Record<string, unknown> = { content };
+  if (ref) payload.ref = ref;
+
+  const result = await glApi<Json>(`projects/${requireProject(ctx)}/ci/lint`, {
+    method: "POST",
+    body: { content: JSON.stringify(payload), contentType: "application/json" },
+    ctx,
+  });
+
+  const valid = result?.valid === true;
+  const errors: string[] = Array.isArray(result?.errors) ? result.errors : [];
+  const warnings: string[] = Array.isArray(result?.warnings)
+    ? result.warnings
+    : [];
+
+  // Signal invalidity through the exit code, keeping the errors[] on stdout.
+  if (!valid) process.exitCode = 1;
+
+  const blocks: Array<string | undefined> = [
+    renderDetail(
+      "lint",
+      { config: path === "-" ? "(stdin)" : path, valid: valid ? "yes" : "no" },
+      [field("config"), field("valid")],
+    ),
+  ];
+  if (errors.length > 0) blocks.push(encode({ errors }));
+  if (warnings.length > 0) blocks.push(encode({ warnings }));
+  if (merged && typeof result?.merged_yaml === "string") {
+    blocks.push(encode({ merged_yaml: result.merged_yaml }));
+  }
+  blocks.push(
+    renderHelp(
+      valid
+        ? [
+            "The config is valid - run `glab-axi ci run --ref <branch>` to trigger a pipeline",
+          ]
+        : [
+            "Fix the errors above, then re-run `glab-axi ci lint` to re-validate",
+          ],
+    ),
+  );
+  return renderOutput(blocks);
+}
+
 // ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
@@ -791,6 +895,8 @@ export async function ciCommand(
       return ciCancel(rest, ctx);
     case "run":
       return ciRun(rest, ctx);
+    case "lint":
+      return ciLint(rest, ctx);
     case "--help":
     case "-h":
     case "help":
