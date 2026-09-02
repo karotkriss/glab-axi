@@ -1,7 +1,7 @@
 # glab-axi
 
 An [AXI](https://agentskills.io)-compliant CLI that wraps the GitLab [`glab`](https://gitlab.com/gitlab-org/cli) CLI for autonomous agents.
-It is the GitLab twin of [`gh-axi`](https://github.com/kunchenguid/gh-axi): token-efficient [TOON](https://toonformat.dev/) output, minimal default schemas, contextual next-step suggestions, idempotent mutations, and structured errors on stdout - everything an agent needs to operate GitLab from the shell without burning tokens or guessing.
+It is the GitLab twin of [`gh-axi`](https://github.com/kunchenguid/gh-axi): token-efficient [TOON](https://toonformat.dev/) output, minimal default schemas, contextual next-step suggestions, idempotent edits, updates, and deletes, and structured errors on stdout - everything an agent needs to operate GitLab from the shell without burning tokens or guessing.
 
 ## Why
 
@@ -13,7 +13,7 @@ Agents drive CLIs by reading stdout. Raw `glab`/REST output is verbose JSON full
 - **Stuck pipelines are named, not just slow** - a pending job no active runner can take is reported in a `stuck` section with the reason, so a poller can tell "blocked, escalate" from "still running, keep waiting".
 - **Real totals, not guesses** - list output reads GitLab's own count (`count: 30 of 847 total`) instead of restating the `--limit` it was just given.
 - **Bounded, greppable CI logs** - `ci log` strips ANSI noise and truncates to a token-safe tail; a truncated trace also spills the full log to a local file the agent can grep instead of paying for it in context.
-- **Idempotent mutations** - closing a closed issue or merging a merged MR is a no-op with exit 0.
+- **Idempotent edits, updates, and deletes** - re-running one after the target state is satisfied is a no-op with exit 0. POST creates make another resource when retried.
 - **Definitive empty states** and **contextual `help[]` suggestions** on every list and mutation.
 - **Structured errors on stdout** - actionable, and they never leak the underlying tool's name.
 - **Fails loud on a typo** - an unrecognized flag or subcommand exits 2 naming what was wrong and listing the valid set, rather than being dropped. A silently ignored `--stat closed` would hand back open issues at exit 0, and an agent cannot tell that from the filtered result it asked for.
@@ -157,9 +157,11 @@ Issues and merge requests are addressed by their project-scoped **IID** (the num
 
 A git remote only resolves to a project when its host is one the `glab` CLI is actually configured for, or when `GITLAB_HOST` explicitly names that host. A remote on a different forge (GitHub, Bitbucket, etc.) resolves to no project rather than a guess.
 
+When `-R group/project` omits the host, the current repository's GitLab remote supplies it while the named project stays unchanged. Outside a GitLab repository, specify the host with `-R host/group/project`, `--host`, or `GITLAB_HOST`; the command errors instead of guessing an instance.
+
 The HOST layers on top of that project resolution, in priority order: `--host <host>` placed **after** the command (an explicit selector that always wins) > `GITLAB_HOST` > the host carried by `-R`/the remote. `--host` alone (no `-R`) targets a self-hosted instance for host-level operations that have no project - `search projects`, `project list`, `api user` - without a project in scope; a project-scoped command still fails loud if no project resolved. A host-only `-R <host>` (naming a host but no group/project) is rejected with a `VALIDATION_ERROR` pointing at `--host`, rather than silently falling through to the default host.
 
-`mr view`, `mr checks`, and `mr diff` also accept a full merge request URL in place of the IID (e.g. `glab-axi mr view https://gitlab.example.com/group/project/-/merge_requests/42`); the URL's own host/project target the request, unless an explicit `-R` flag overrides it.
+`mr view`, `mr merge`, `mr checks`, and `mr diff` also accept a full merge request URL in place of the IID (e.g. `glab-axi mr view https://gitlab.example.com/group/project/-/merge_requests/42`); the URL's own host/project target the request, unless an explicit `-R` flag overrides it.
 
 `mr view --reviews` adds approval state (who approved, approvals given/required) and discussion-thread resolution counts. `mr diff` prints a bounded per-file summary (path, status, `+`/`-` line counts) by default; `--full` emits the complete reconstructed unified diff. `mr merge --auto` sets GitLab's merge-when-pipeline-succeeds: it merges immediately if there is no pipeline (or it already passed), otherwise it defers and reports the scheduled state instead of a merge commit SHA; it cannot combine with `--rebase`. When GitLab refuses a merge, the error names the specific cause (conflicts, a draft MR, unresolved discussions, missing approvals, a pipeline that hasn't passed, and so on) plus the command that clears it, instead of GitLab's opaque "Branch cannot be merged". `mr list` and `mr view` accept the same `--jq`/`--json` escape hatches as `api` (see below).
 
@@ -333,7 +335,7 @@ npm run skill:check            # fail if SKILL.md is stale
 
 The skill installed by the [Quick Start](#quick-start) is generated from the CLI's own help (`npm run skill:build`), and CI fails if it has drifted - commit the regenerated file.
 
-Architecture notes live in [`AGENTS.md`](./AGENTS.md). The short version: every shell-out goes through `src/gl.ts`, which targets GitLab via `glab api` (REST passthrough) - the host through `GITLAB_HOST`, the project through its URL-encoded path. `src/commands/mr.ts` is the reference template for the per-domain command files.
+Architecture notes live in [`AGENTS.md`](./AGENTS.md). The short version: every shell-out goes through `src/gl.ts`, which targets GitLab via `glab api` (REST passthrough) - the host through `--hostname`, the project through its URL-encoded path. `GITLAB_HOST` is also set for compatibility, but it is not authoritative when the current directory has an authenticated remote on another host. `src/commands/mr.ts` is the reference template for the per-domain command files.
 
 ## Releasing
 
