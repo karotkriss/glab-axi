@@ -93,6 +93,79 @@ describe("gl error mapping", () => {
   });
 });
 
+describe("host targeting and raw request body", () => {
+  /** Capture the argv and any stdin the child was handed. */
+  function captureCall(): { args: () => string[]; stdin: () => unknown } {
+    let seenArgs: string[] = [];
+    let seenStdin: unknown;
+    execFileMock.mockImplementation(
+      (
+        _cmd: string,
+        args: string[],
+        _opts: unknown,
+        callback: (error: Error | null, stdout: string, stderr: string) => void,
+      ) => {
+        seenArgs = args;
+        queueMicrotask(() => callback(null, "{}", ""));
+        return {
+          stdin: {
+            on: () => {},
+            end: (value: unknown) => {
+              seenStdin = value;
+            },
+          },
+        };
+      },
+    );
+    return { args: () => seenArgs, stdin: () => seenStdin };
+  }
+
+  const ctx = {
+    host: "gitlab.example.com",
+    project: "group/project",
+    source: "flag" as const,
+  };
+
+  it("passes --hostname so the cwd git remote cannot silently override the target host", async () => {
+    const cap = captureCall();
+    await glApi("projects/1", { ctx });
+    expect(cap.args()).toContain("--hostname");
+    const i = cap.args().indexOf("--hostname");
+    expect(cap.args()[i + 1]).toBe("gitlab.example.com");
+  });
+
+  it("adds no --hostname when no host is resolved", async () => {
+    const cap = captureCall();
+    await glApi("projects/1");
+    expect(cap.args()).not.toContain("--hostname");
+  });
+
+  it("sends a raw body via --input - with its Content-Type, feeding the bytes on stdin", async () => {
+    const cap = captureCall();
+    await glApi("snippets", {
+      method: "POST",
+      body: { content: '{"a":1}', contentType: "application/json" },
+      ctx,
+    });
+    const args = cap.args();
+    expect(args).toContain("--input");
+    expect(args[args.indexOf("--input") + 1]).toBe("-");
+    expect(args).toContain("Content-Type: application/json");
+    expect(cap.stdin()).toBe('{"a":1}');
+  });
+
+  it("carries a binary Buffer body through to the child's stdin intact", async () => {
+    const cap = captureCall();
+    const bytes = Buffer.from([0x00, 0x01, 0x89, 0x50]);
+    await glApi("projects/1/uploads", {
+      method: "POST",
+      body: { content: bytes, contentType: "multipart/form-data; boundary=x" },
+      ctx,
+    });
+    expect(cap.stdin()).toBe(bytes);
+  });
+});
+
 describe("glConfigGet", () => {
   it("returns '' when the host has no config entry", () => {
     execFileSyncMock.mockImplementation(() => {
