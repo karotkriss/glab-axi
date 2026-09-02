@@ -50,6 +50,7 @@ describe("runner list", () => {
       "runners[1]{id,description,type,online,paused,status}",
     );
     expect(out).toContain("175,docker runner,instance_type,yes,no,online");
+    expect(out).toContain("-R gitlab.example.com/group/project");
   });
 
   it("passes --status and --tag-list through as query params", async () => {
@@ -67,6 +68,7 @@ describe("runner list", () => {
     glApiMock.mockResolvedValueOnce([]);
     const out = await runnerCommand(["list"], ctx);
     expect(out).toContain("0 runners found");
+    expect(out).toContain("-R gitlab.example.com/group/project");
   });
 });
 

@@ -3,6 +3,7 @@ import { glApi, glApiList, glRaw, type Json } from "../gl.js";
 import { AxiError } from "../errors.js";
 import type { RepoContext } from "../context.js";
 import { formatCountLine } from "../format.js";
+import { repoFlag } from "../suggestions.js";
 import { refuseSubcommand } from "../refusals.js";
 import { takeFlag, takeAllFlags, takeNumber, parseLimit } from "../args.js";
 import {
@@ -176,14 +177,16 @@ async function snippetList(args: string[], ctx?: RepoContext): Promise<string> {
     return renderOutput([
       "snippets: 0 snippets found",
       renderHelp([
-        'Run `glab-axi snippet create --title "..." --file name=@path` to create one',
+        `Run \`glab-axi snippet create --title "..." --file name=@path${repoFlag({ domain: "snippet", action: "list", repo: ctx })}\` to create one`,
       ]),
     ]);
   }
   return renderOutput([
     formatCountLine({ count: items.length, limit, totalCount }),
     renderList("snippets", items, listSchema),
-    renderHelp(["Run `glab-axi snippet view <id>` to see a snippet's files"]),
+    renderHelp([
+      `Run \`glab-axi snippet view <id>${repoFlag({ domain: "snippet", action: "list", repo: ctx })}\` to see a snippet's files`,
+    ]),
   ]);
 }
 
@@ -229,8 +232,8 @@ async function snippetView(args: string[], ctx?: RepoContext): Promise<string> {
   return renderOutput([
     renderDetail("snippet", snippet, viewSchema),
     renderHelp([
-      `Run \`glab-axi snippet view ${id} --file <name>\` to read one file's content`,
-      `Run \`glab-axi snippet edit ${id} --file <name>=@path\` to update a file`,
+      `Run \`glab-axi snippet view ${id} --file <name>${repoFlag({ domain: "snippet", action: "view", repo: ctx })}\` to read one file's content`,
+      `Run \`glab-axi snippet edit ${id} --file <name>=@path${repoFlag({ domain: "snippet", action: "view", repo: ctx })}\` to update a file`,
     ]),
   ]);
 }
@@ -290,7 +293,7 @@ async function snippetCreate(
       ],
     ),
     renderHelp([
-      `Run \`glab-axi snippet view ${created?.id}\` to see the snippet`,
+      `Run \`glab-axi snippet view ${created?.id}${repoFlag({ domain: "snippet", action: "create", repo: ctx })}\` to see the snippet`,
     ]),
   ]);
 }
@@ -378,7 +381,9 @@ async function snippetEdit(args: string[], ctx?: RepoContext): Promise<string> {
         field("url"),
       ],
     ),
-    renderHelp([`Run \`glab-axi snippet view ${id}\` to confirm the changes`]),
+    renderHelp([
+      `Run \`glab-axi snippet view ${id}${repoFlag({ domain: "snippet", action: "edit", repo: ctx })}\` to confirm the changes`,
+    ]),
   ]);
 }
 
@@ -393,7 +398,9 @@ async function snippetDelete(
       field("snippet"),
       field("status"),
     ]),
-    renderHelp(["Run `glab-axi snippet list` to see your remaining snippets"]),
+    renderHelp([
+      `Run \`glab-axi snippet list${repoFlag({ domain: "snippet", action: "delete", repo: ctx })}\` to see your remaining snippets`,
+    ]),
   ]);
 }
 
