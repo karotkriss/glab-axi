@@ -823,7 +823,10 @@ async function ciLint(args: string[], ctx?: RepoContext): Promise<string> {
   const content = readLintContent(path);
 
   const payload: Record<string, unknown> = { content };
-  if (ref) payload.ref = ref;
+  if (ref !== undefined) {
+    payload.ref = ref;
+    payload.dry_run = true;
+  }
   if (merged) payload.include_merged_yaml = true;
 
   const result = await glApi<Json>(`projects/${requireProject(ctx)}/ci/lint`, {
@@ -860,7 +863,7 @@ async function ciLint(args: string[], ctx?: RepoContext): Promise<string> {
             `The config is valid - run \`glab-axi ci run --ref <branch>${repoFlag({ domain: "ci", action: "lint", repo: ctx })}\` to trigger a pipeline`,
           ]
         : [
-            `Fix the errors above, then re-run \`glab-axi ci lint${repoFlag({ domain: "ci", action: "lint", repo: ctx })}\` to re-validate`,
+            `Fix the errors above, then re-run \`glab-axi ci lint ${path}${ref !== undefined ? ` --ref ${ref}` : ""}${merged ? " --merged" : ""}${repoFlag({ domain: "ci", action: "lint", repo: ctx })}\` to re-validate`,
           ],
     ),
   );
