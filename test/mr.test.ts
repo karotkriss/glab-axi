@@ -1145,6 +1145,63 @@ describe("mr merge failure diagnosis (AXI clause 6 + 9)", () => {
     expect(err.code).toBe("AUTH_REQUIRED");
   });
 
+  it("reports an inconclusive result when /user returns 500", async () => {
+    glApiMock.mockResolvedValueOnce({
+      iid: 1,
+      state: "opened",
+      source_branch: "feat",
+      target_branch: "main",
+    });
+    glApiMock.mockRejectedValueOnce(
+      new AxiError(
+        "GitLab authentication required for this host",
+        "AUTH_REQUIRED",
+      ),
+    );
+    glApiResultMock.mockResolvedValueOnce({
+      exitCode: 1,
+      stdout: "",
+      stderr: "500 Internal Server Error",
+    });
+    const err = (await mrCommand(["merge", "1"], ctx).catch(
+      (e) => e,
+    )) as AxiError;
+    expect(err.code).toBe("UNKNOWN");
+    expect(err.message).toContain("token could not be reconfirmed");
+    expect(err.message).toContain("credential may have expired");
+    expect(err.message).toContain("may lack permission to merge");
+    expect(err.message).not.toContain("the authenticated account");
+    expect(err.suggestions.join("\n")).toContain("Re-authenticate");
+    expect(err.suggestions.join("\n")).toContain("merge rights");
+  });
+
+  it("reports an inconclusive result when /user has no username", async () => {
+    glApiMock.mockResolvedValueOnce({
+      iid: 1,
+      state: "opened",
+      source_branch: "feat",
+      target_branch: "main",
+    });
+    glApiMock.mockRejectedValueOnce(
+      new AxiError(
+        "GitLab authentication required for this host",
+        "AUTH_REQUIRED",
+      ),
+    );
+    glApiResultMock.mockResolvedValueOnce({
+      exitCode: 0,
+      stdout: JSON.stringify({ name: "Test User" }),
+      stderr: "",
+    });
+    const err = (await mrCommand(["merge", "1"], ctx).catch(
+      (e) => e,
+    )) as AxiError;
+    expect(err.code).toBe("UNKNOWN");
+    expect(err.message).toContain("token could not be reconfirmed");
+    expect(err.message).not.toContain("the authenticated account");
+    expect(glApiResultMock).toHaveBeenCalledTimes(1);
+  });
+
   it("does not over-claim 'protected' when the branch protection cannot be confirmed", async () => {
     glApiMock.mockResolvedValueOnce({
       iid: 1,

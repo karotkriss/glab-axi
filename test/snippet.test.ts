@@ -9,6 +9,8 @@ vi.mock("../src/gl.js", () => ({
   glApiList: vi.fn(),
   glApiResult: vi.fn(),
   glRaw: vi.fn(),
+  errorBody: (result: { stderr: string; stdout: string }) =>
+    [result.stderr, result.stdout].filter(Boolean).join("\n"),
 }));
 
 import { snippetCommand } from "../src/commands/snippet.js";
@@ -143,7 +145,7 @@ describe("snippet view", () => {
     );
     // ref 'master' is parsed out of the file's raw_url.
     expect(glRawMock.mock.calls[0][0]).toBe(
-      "snippets/13/files/master/install.sh/raw",
+      "snippets/13/files/master/install.sh/raw?line_ending=raw",
     );
     expect(out).toContain("echo hi");
   });
@@ -230,6 +232,32 @@ describe("snippet edit", () => {
     expect(glRawMock).toHaveBeenCalledTimes(1);
   });
 
+  it("preserves CRLF while comparing an unchanged file", async () => {
+    glApiMock.mockResolvedValueOnce({
+      id: 13,
+      title: "Installer",
+      visibility: "private",
+      files: [
+        {
+          path: "install.sh",
+          raw_url:
+            "https://gitlab.example.com/-/snippets/13/raw/master/install.sh",
+        },
+      ],
+    });
+    glRawMock.mockResolvedValueOnce("echo one\r\necho two\r\n");
+    const out = await snippetCommand(
+      ["edit", "13", "--file", "install.sh=echo one\r\necho two\r\n"],
+      ctx,
+    );
+    expect(out).toContain("already: true");
+    expect(glApiMock).toHaveBeenCalledTimes(1);
+    expect(glRawMock).toHaveBeenCalledWith(
+      "snippets/13/files/master/install.sh/raw?line_ending=raw",
+      { ctx },
+    );
+  });
+
   it("accepts an explicit empty description and clears it", async () => {
     glApiMock.mockResolvedValueOnce({
       id: 13,
@@ -276,6 +304,19 @@ describe("snippet delete", () => {
     });
     const out = await snippetCommand(["delete", "13"], ctx);
     expect(out).toContain("already_absent: true");
+    expect(glApiResultMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves a forbidden pre-delete lookup as FORBIDDEN", async () => {
+    glApiResultMock.mockResolvedValueOnce({
+      exitCode: 1,
+      stdout: "",
+      stderr: "403 Forbidden",
+    });
+    const err = (await snippetCommand(["delete", "13"], ctx).catch(
+      (error) => error,
+    )) as { code: string };
+    expect(err.code).toBe("FORBIDDEN");
     expect(glApiResultMock).toHaveBeenCalledTimes(1);
   });
 });

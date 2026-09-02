@@ -17,6 +17,7 @@ args:
 flags{upload}:
   --name <filename> (name to store the upload under; required when reading stdin, else defaults to the file's basename)
 notes:
+  Retrying upload stores a new copy because GitLab provides no idempotency key for uploads.
   Uploads a file to the project (POST /projects/:id/uploads) and returns the markdown snippet that embeds it in an issue or merge request description, plus its url and alt text. The upload is binary-safe - unlike \`repo create-file\`, it handles images and other binary content. It is scoped to the resolved project (-R/--host/remote); the returned url is relative to that project.
 examples:
   glab-axi upload screenshot.png

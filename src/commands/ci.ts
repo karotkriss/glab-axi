@@ -808,6 +808,11 @@ function readLintContent(path: string): string {
   }
 }
 
+function shellQuote(value: string): string {
+  if (value === "-") return value;
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
 /**
  * `ci lint [path]` — validate a .gitlab-ci.yml against the project without
  * running a pipeline (POST /projects/:id/ci/lint). The config travels as a JSON
@@ -863,7 +868,7 @@ async function ciLint(args: string[], ctx?: RepoContext): Promise<string> {
             `The config is valid - run \`glab-axi ci run --ref <branch>${repoFlag({ domain: "ci", action: "lint", repo: ctx })}\` to trigger a pipeline`,
           ]
         : [
-            `Fix the errors above, then re-run \`glab-axi ci lint ${path}${ref !== undefined ? ` --ref ${ref}` : ""}${merged ? " --merged" : ""}${repoFlag({ domain: "ci", action: "lint", repo: ctx })}\` to re-validate`,
+            `Fix the errors above, then re-run \`glab-axi ci lint ${shellQuote(path)}${ref !== undefined ? ` --ref ${shellQuote(ref)}` : ""}${merged ? " --merged" : ""}${repoFlag({ domain: "ci", action: "lint", repo: ctx })}\` to re-validate`,
           ],
     ),
   );

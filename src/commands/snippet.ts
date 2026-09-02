@@ -1,6 +1,13 @@
 import { readFileSync } from "node:fs";
-import { glApi, glApiList, glApiResult, glRaw, type Json } from "../gl.js";
-import { AxiError, scrubTool } from "../errors.js";
+import {
+  glApi,
+  glApiList,
+  glApiResult,
+  glRaw,
+  errorBody,
+  type Json,
+} from "../gl.js";
+import { AxiError, mapGlError } from "../errors.js";
 import type { RepoContext } from "../context.js";
 import { formatCountLine } from "../format.js";
 import { repoFlag } from "../suggestions.js";
@@ -218,7 +225,7 @@ async function snippetView(args: string[], ctx?: RepoContext): Promise<string> {
     }
     const ref = refFromRawUrl(match.raw_url);
     const content = await glRaw(
-      `snippets/${id}/files/${ref}/${encodeURIComponent(file)}/raw`,
+      `snippets/${id}/files/${ref}/${encodeURIComponent(file)}/raw?line_ending=raw`,
       { ctx },
     );
     return renderOutput([
@@ -334,7 +341,7 @@ async function snippetEdit(args: string[], ctx?: RepoContext): Promise<string> {
     if (currentFile) {
       const ref = refFromRawUrl(currentFile.raw_url);
       const currentContent = await glRaw(
-        `snippets/${id}/files/${ref}/${encodeURIComponent(src.path)}/raw`,
+        `snippets/${id}/files/${ref}/${encodeURIComponent(src.path)}/raw?line_ending=raw`,
         { ctx },
       );
       if (currentContent === src.content) continue;
@@ -443,23 +450,16 @@ async function snippetDelete(
     ]);
   const existing = await glApiResult(path, { ctx });
   if (existing.exitCode !== 0) {
-    const text = `${existing.stderr} ${existing.stdout}`;
+    const text = errorBody(existing);
     if (/404|not found/i.test(text)) return output(true);
-    throw new AxiError(
-      scrubTool(existing.stderr || existing.stdout) ||
-        "Failed to look up snippet",
-      "UNKNOWN",
-    );
+    throw mapGlError(text, existing.exitCode);
   }
 
   const deleted = await glApiResult(path, { method: "DELETE", ctx });
   if (deleted.exitCode !== 0) {
-    const text = `${deleted.stderr} ${deleted.stdout}`;
+    const text = errorBody(deleted);
     if (/404|not found/i.test(text)) return output(true);
-    throw new AxiError(
-      scrubTool(deleted.stderr || deleted.stdout) || "Failed to delete snippet",
-      "UNKNOWN",
-    );
+    throw mapGlError(text, deleted.exitCode);
   }
   return output(false);
 }
