@@ -254,6 +254,23 @@ describe("mr create", () => {
 });
 
 describe("mr merge", () => {
+  it("combines a full MR URL's project with an explicit host-only selector", async () => {
+    glApiMock.mockResolvedValueOnce(
+      mr({ iid: 7, state: "merged", merged_by: { username: "alice" } }),
+    );
+    await mrCommand(
+      ["merge", "https://gitlab.example.com/team/app/-/merge_requests/7"],
+      { host: "override.example.com", source: "flag" },
+    );
+    expect(glApiMock.mock.calls[0][0]).toBe(
+      `projects/${encodeURIComponent("team/app")}/merge_requests/7`,
+    );
+    expect(glApiMock.mock.calls[0][1].ctx).toMatchObject({
+      host: "override.example.com",
+      project: "team/app",
+    });
+  });
+
   it("is idempotent when already merged", async () => {
     glApiMock.mockResolvedValueOnce(
       mr({ state: "merged", merged_by: { username: "alice" } }),
