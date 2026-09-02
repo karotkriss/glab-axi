@@ -91,8 +91,9 @@ function envFor(ctx?: RepoContext): NodeJS.ProcessEnv {
 /**
  * Build the argument list for `glab api`. Crucially, we never append `-R`:
  * `glab api` rejects `-R`, and the project is always addressed by its
- * URL-encoded path inside the REST path instead. The host is targeted via the
- * GITLAB_HOST environment variable, not a flag.
+ * URL-encoded path inside the REST path instead. The host is targeted with
+ * `--hostname`; GITLAB_HOST is also set for compatibility but is not
+ * authoritative when the current directory has another authenticated remote.
  */
 function buildApiArgs(path: string, opts: GlApiOptions): string[] {
   const args = ["api", path, "--method", (opts.method ?? "GET").toUpperCase()];
