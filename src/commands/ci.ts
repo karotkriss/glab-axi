@@ -824,6 +824,7 @@ async function ciLint(args: string[], ctx?: RepoContext): Promise<string> {
 
   const payload: Record<string, unknown> = { content };
   if (ref) payload.ref = ref;
+  if (merged) payload.include_merged_yaml = true;
 
   const result = await glApi<Json>(`projects/${requireProject(ctx)}/ci/lint`, {
     method: "POST",

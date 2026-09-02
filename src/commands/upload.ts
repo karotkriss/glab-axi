@@ -120,7 +120,22 @@ export async function uploadCommand(
   if (args[0] === "--help" || args[0] === "-h" || args.length === 0) {
     return UPLOAD_HELP;
   }
-  requireProject(ctx);
+  const nameIndex = args.findIndex(
+    (arg) => arg === "--name" || arg.startsWith("--name="),
+  );
+  if (
+    nameIndex !== -1 &&
+    (args[nameIndex] === "--name"
+      ? args[nameIndex + 1] === undefined ||
+        args[nameIndex + 1].startsWith("--")
+      : args[nameIndex].slice("--name=".length).length === 0)
+  ) {
+    throw new AxiError(
+      "Missing value for `--name` in `glab-axi upload`",
+      "VALIDATION_ERROR",
+      ["Pass a filename after `--name`, or use `--name=<filename>`"],
+    );
+  }
   const nameFlag = takeFlag(args, "--name");
   // upload has no subcommand, so the shared rejectUnknownFlags guard (keyed on a
   // subcommand name) cannot validate its flags - do it here so an unknown flag
@@ -133,6 +148,7 @@ export async function uploadCommand(
       ["The only flag is --name; the file is a positional argument"],
     );
   }
+  requireProject(ctx);
   const path = getPositional(args, 0);
   if (!path) {
     throw new AxiError("Missing file to upload", "VALIDATION_ERROR", [

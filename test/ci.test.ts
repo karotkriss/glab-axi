@@ -764,6 +764,12 @@ describe("ci lint", () => {
     expect(plain).not.toContain("merged_yaml");
     const merged = await ciCommand(["lint", path, "--merged"], ctx);
     expect(merged).toContain("merged_yaml");
+    expect(
+      JSON.parse(glApiMock.mock.calls[0][1].body.content),
+    ).not.toHaveProperty("include_merged_yaml");
+    expect(JSON.parse(glApiMock.mock.calls[1][1].body.content)).toMatchObject({
+      include_merged_yaml: true,
+    });
   });
 
   it("defaults the path to .gitlab-ci.yml and errors clearly when it is missing", async () => {

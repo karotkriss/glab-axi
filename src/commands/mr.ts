@@ -121,7 +121,12 @@ function resolveMrRef(
     const raw = args.splice(urlIdx, 1)[0];
     const iid = Number(raw.match(MR_URL_RE)![1]);
     const fromUrl = parseMrUrl(raw);
-    const target = ctx?.source === "flag" ? ctx : (fromUrl ?? ctx);
+    const target =
+      ctx?.source === "flag" && ctx.project
+        ? ctx
+        : fromUrl && ctx?.source === "flag" && ctx.host
+          ? { ...fromUrl, host: ctx.host }
+          : (fromUrl ?? ctx);
     return { iid, ctx: target };
   }
   return { iid: takeNumber(args, "merge request"), ctx };

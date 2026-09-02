@@ -82,6 +82,18 @@ describe("upload", () => {
     expect(body.toString("latin1")).toContain('filename="failure-before.png"');
   });
 
+  it("rejects --name without a value before uploading", async () => {
+    const file = join(dir, "local-name.png");
+    writeFileSync(file, Buffer.from([1, 2, 3]));
+    await expect(uploadCommand([file, "--name"], ctx)).rejects.toThrow(
+      /Missing value for `--name`/,
+    );
+    await expect(
+      uploadCommand([file, "--name", "--bogus"], ctx),
+    ).rejects.toThrow(/Missing value for `--name`/);
+    expect(glApiMock).not.toHaveBeenCalled();
+  });
+
   it("errors on a missing file rather than uploading nothing", async () => {
     await expect(uploadCommand([join(dir, "nope.png")], ctx)).rejects.toThrow(
       /File not found/,

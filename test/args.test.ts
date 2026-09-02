@@ -268,6 +268,13 @@ describe("what the guard must not break", () => {
     expect(out).toContain("draft");
   });
 
+  it("rejects a value-taking flag with no value before any API call", async () => {
+    const { out, code } = await cli("runner", "list", "--status");
+    expect(code).toBe(2);
+    expect(out).toContain("Missing value for `--status`");
+    expect(glApiMock).not.toHaveBeenCalled();
+  });
+
   // Regression: --template takes a value (`--template owner/repo`, mirroring
   // gh) and must reach its own "template not supported" refusal in both the
   // bare and equals forms - not the boolean-equals error, which would wrongly

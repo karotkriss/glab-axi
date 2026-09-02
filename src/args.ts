@@ -72,7 +72,7 @@ export function getAllFlags(args: string[], flag: string): string[] {
 export function takeAllFlags(args: string[], flag: string): string[] {
   const result: string[] = [];
   const equalsPrefix = flagEqualsPrefix(flag);
-  for (let i = 0; i < args.length; ) {
+  for (let i = 0; i < args.length;) {
     const arg = args[i];
     if (arg === flag && i + 1 < args.length) {
       result.push(args[i + 1]);
@@ -278,6 +278,19 @@ export function rejectUnknownFlags(
         `\`${name}\` is a boolean flag for \`glab-axi ${domain} ${sub}\` and cannot take a value with \`=\``,
         "VALIDATION_ERROR",
         [`Pass it bare: \`${name}\`, not \`${arg}\``],
+      );
+    }
+    if (
+      allowed.has(name) &&
+      !booleans.has(name) &&
+      ((eqIndex !== -1 && arg.slice(eqIndex + 1).length === 0) ||
+        (eqIndex === -1 &&
+          (args[index + 1] === undefined || args[index + 1].startsWith("--"))))
+    ) {
+      throw new AxiError(
+        `Missing value for \`${name}\` in \`glab-axi ${domain} ${sub}\``,
+        "VALIDATION_ERROR",
+        [`Pass a value after \`${name}\`, or use \`${name}=<value>\``],
       );
     }
   }
