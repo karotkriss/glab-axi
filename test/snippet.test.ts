@@ -7,15 +7,17 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 vi.mock("../src/gl.js", () => ({
   glApi: vi.fn(),
   glApiList: vi.fn(),
+  glApiResult: vi.fn(),
   glRaw: vi.fn(),
 }));
 
 import { snippetCommand } from "../src/commands/snippet.js";
-import { glApi, glApiList, glRaw } from "../src/gl.js";
+import { glApi, glApiList, glApiResult, glRaw } from "../src/gl.js";
 import type { RepoContext } from "../src/context.js";
 
 const glApiMock = glApi as unknown as ReturnType<typeof vi.fn>;
 const glApiListMock = glApiList as unknown as ReturnType<typeof vi.fn>;
+const glApiResultMock = glApiResult as unknown as ReturnType<typeof vi.fn>;
 const glRawMock = glRaw as unknown as ReturnType<typeof vi.fn>;
 const ctx: RepoContext = { host: "gitlab.example.com", source: "flag" };
 
@@ -23,6 +25,7 @@ let dir: string;
 beforeEach(() => {
   glApiMock.mockReset();
   glApiListMock.mockReset();
+  glApiResultMock.mockReset();
   glRawMock.mockReset();
   dir = mkdtempSync(join(tmpdir(), "glab-axi-snippet-test-"));
 });
@@ -162,6 +165,7 @@ describe("snippet edit", () => {
   it("sets action=update for an existing file, create for a new one, delete for --delete-file", async () => {
     glApiMock.mockResolvedValueOnce(current); // GET current files
     glApiMock.mockResolvedValueOnce({ id: 13, title: "Installer" }); // PUT
+    glRawMock.mockResolvedValueOnce("echo v1\n");
     const f = join(dir, "install.sh");
     writeFileSync(f, "echo v2\n");
 
@@ -189,11 +193,61 @@ describe("snippet edit", () => {
     expect(out).toContain("--host gitlab.example.com");
   });
 
-  it("refuses to delete a file the snippet does not have", async () => {
-    glApiMock.mockResolvedValueOnce(current);
-    await expect(
-      snippetCommand(["edit", "13", "--delete-file", "ghost.sh"], ctx),
-    ).rejects.toThrow(/no file named ghost.sh to delete/);
+  it("skips the PUT when every requested change is already satisfied", async () => {
+    glApiMock.mockResolvedValueOnce({
+      id: 13,
+      title: "Installer",
+      description: "Notes",
+      visibility: "private",
+      files: [
+        {
+          path: "install.sh",
+          raw_url:
+            "https://gitlab.example.com/-/snippets/13/raw/master/install.sh",
+        },
+      ],
+    });
+    glRawMock.mockResolvedValueOnce("echo hi\n");
+    const out = await snippetCommand(
+      [
+        "edit",
+        "13",
+        "--title",
+        "Installer",
+        "--description",
+        "Notes",
+        "--visibility",
+        "private",
+        "--file",
+        "install.sh=echo hi\n",
+        "--delete-file",
+        "already-gone.sh",
+      ],
+      ctx,
+    );
+    expect(out).toContain("already: true");
+    expect(glApiMock).toHaveBeenCalledTimes(1);
+    expect(glRawMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts an explicit empty description and clears it", async () => {
+    glApiMock.mockResolvedValueOnce({
+      id: 13,
+      title: "Installer",
+      description: "Old description",
+      visibility: "private",
+      files: [],
+    });
+    glApiMock.mockResolvedValueOnce({
+      id: 13,
+      title: "Installer",
+      description: "",
+      visibility: "private",
+      files: [],
+    });
+    await snippetCommand(["edit", "13", "--description="], ctx);
+    const payload = JSON.parse(glApiMock.mock.calls[1][1].body.content);
+    expect(payload.description).toBe("");
   });
 
   it("errors when no change is provided", async () => {
@@ -205,9 +259,24 @@ describe("snippet edit", () => {
 
 describe("snippet delete", () => {
   it("keeps the selected host in its follow-up command", async () => {
-    glApiMock.mockResolvedValueOnce({});
+    glApiResultMock
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "{}", stderr: "" })
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "" });
     const out = await snippetCommand(["delete", "13"], ctx);
     expect(out).toContain("--host gitlab.example.com");
+    expect(glApiResultMock.mock.calls[0][0]).toBe("snippets/13");
+    expect(glApiResultMock.mock.calls[1][1].method).toBe("DELETE");
+  });
+
+  it("reports an already-absent snippet as a successful no-op", async () => {
+    glApiResultMock.mockResolvedValueOnce({
+      exitCode: 1,
+      stdout: "",
+      stderr: "404 Not Found",
+    });
+    const out = await snippetCommand(["delete", "13"], ctx);
+    expect(out).toContain("already_absent: true");
+    expect(glApiResultMock).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -215,6 +284,7 @@ describe("snippet router", () => {
   it("returns help for no subcommand", async () => {
     const out = await snippetCommand([], ctx);
     expect(out).toContain("usage: glab-axi snippet");
+    expect(out).toContain("retrying create makes another new snippet");
   });
 
   it("errors on an unknown subcommand", async () => {

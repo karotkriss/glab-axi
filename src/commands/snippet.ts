@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
-import { glApi, glApiList, glRaw, type Json } from "../gl.js";
-import { AxiError } from "../errors.js";
+import { glApi, glApiList, glApiResult, glRaw, type Json } from "../gl.js";
+import { AxiError, scrubTool } from "../errors.js";
 import type { RepoContext } from "../context.js";
 import { formatCountLine } from "../format.js";
 import { repoFlag } from "../suggestions.js";
@@ -47,6 +47,7 @@ flags{delete}:
   (none)
 notes:
   snippet addresses personal snippets by their global id and is host-scoped (-R/--host/remote select only the host), not project-scoped.
+  create always makes a new snippet; retrying create makes another new snippet because GitLab provides no idempotency key.
   A file source name=@path reads the file, name=@- reads stdin (only one), and name=text is literal inline content.
   edit sends the whole files[] change set in one request: an existing file is updated, a new one is created, and --delete-file removes one - so a re-sync of several files is a single atomic edit.
 examples:
@@ -318,43 +319,75 @@ async function snippetEdit(args: string[], ctx?: RepoContext): Promise<string> {
   }
 
   // GitLab's files[] update needs the right action per file (create vs update vs
-  // delete), so read the current file set first. This also lets --delete-file
-  // fail loudly on a file that isn't there rather than 400 opaquely.
+  // delete), so read the current file set first.
   const current = await glApi<Json>(`snippets/${id}`, { ctx });
-  const existing = new Set<string>(
-    (Array.isArray(current.files) ? current.files : [])
-      .map((f: Json) => f?.path)
-      .filter((p: unknown): p is string => typeof p === "string"),
-  );
+  const existing = new Map<string, Json>();
+  for (const file of Array.isArray(current.files) ? current.files : []) {
+    if (typeof file?.path === "string") existing.set(file.path, file);
+  }
 
   const stdinUsed = { taken: false };
   const files: Array<Record<string, string>> = [];
   for (const spec of fileSpecs) {
     const src = parseFileSpec(spec, stdinUsed);
+    const currentFile = existing.get(src.path);
+    if (currentFile) {
+      const ref = refFromRawUrl(currentFile.raw_url);
+      const currentContent = await glRaw(
+        `snippets/${id}/files/${ref}/${encodeURIComponent(src.path)}/raw`,
+        { ctx },
+      );
+      if (currentContent === src.content) continue;
+    }
     files.push({
-      action: existing.has(src.path) ? "update" : "create",
+      action: currentFile ? "update" : "create",
       file_path: src.path,
       content: src.content,
     });
   }
   for (const name of deletions) {
-    if (!existing.has(name)) {
-      throw new AxiError(
-        `Snippet ${id} has no file named ${name} to delete`,
-        "VALIDATION_ERROR",
-        existing.size
-          ? [`Files in this snippet: ${[...existing].join(", ")}`]
-          : [],
-      );
-    }
-    files.push({ action: "delete", file_path: name });
+    if (existing.has(name)) files.push({ action: "delete", file_path: name });
   }
 
   const payload: Record<string, unknown> = {};
-  if (title !== undefined) payload.title = title;
-  if (description !== undefined) payload.description = description;
-  if (visibility !== undefined) payload.visibility = visibility;
+  if (title !== undefined && title !== current.title) payload.title = title;
+  if (
+    description !== undefined &&
+    description !== (current.description ?? "")
+  ) {
+    payload.description = description;
+  }
+  if (visibility !== undefined && visibility !== current.visibility) {
+    payload.visibility = visibility;
+  }
   if (files.length > 0) payload.files = files;
+
+  if (Object.keys(payload).length === 0) {
+    return renderOutput([
+      renderDetail(
+        "updated",
+        {
+          id: current?.id ?? id,
+          title: current?.title,
+          visibility: current?.visibility,
+          files: [...existing.keys()],
+          url: current?.web_url ?? "",
+          already: true,
+        },
+        [
+          field("id"),
+          field("title"),
+          lower("visibility"),
+          field("files"),
+          field("url"),
+          field("already"),
+        ],
+      ),
+      renderHelp([
+        `Run \`glab-axi snippet view ${id}${repoFlag({ domain: "snippet", action: "edit", repo: ctx })}\` to confirm the state`,
+      ]),
+    ]);
+  }
 
   const updated = await glApi<Json>(`snippets/${id}`, {
     method: "PUT",
@@ -392,16 +425,43 @@ async function snippetDelete(
   ctx?: RepoContext,
 ): Promise<string> {
   const id = takeNumber(args, "snippet");
-  await glApi<Json>(`snippets/${id}`, { method: "DELETE", ctx });
-  return renderOutput([
-    renderDetail("deleted", { snippet: id, status: "ok" }, [
-      field("snippet"),
-      field("status"),
-    ]),
-    renderHelp([
-      `Run \`glab-axi snippet list${repoFlag({ domain: "snippet", action: "delete", repo: ctx })}\` to see your remaining snippets`,
-    ]),
-  ]);
+  const path = `snippets/${id}`;
+  const output = (alreadyAbsent: boolean): string =>
+    renderOutput([
+      alreadyAbsent
+        ? renderDetail("deleted", { snippet: id, already_absent: true }, [
+            field("snippet"),
+            field("already_absent"),
+          ])
+        : renderDetail("deleted", { snippet: id, status: "ok" }, [
+            field("snippet"),
+            field("status"),
+          ]),
+      renderHelp([
+        `Run \`glab-axi snippet list${repoFlag({ domain: "snippet", action: "delete", repo: ctx })}\` to see your remaining snippets`,
+      ]),
+    ]);
+  const existing = await glApiResult(path, { ctx });
+  if (existing.exitCode !== 0) {
+    const text = `${existing.stderr} ${existing.stdout}`;
+    if (/404|not found/i.test(text)) return output(true);
+    throw new AxiError(
+      scrubTool(existing.stderr || existing.stdout) ||
+        "Failed to look up snippet",
+      "UNKNOWN",
+    );
+  }
+
+  const deleted = await glApiResult(path, { method: "DELETE", ctx });
+  if (deleted.exitCode !== 0) {
+    const text = `${deleted.stderr} ${deleted.stdout}`;
+    if (/404|not found/i.test(text)) return output(true);
+    throw new AxiError(
+      scrubTool(deleted.stderr || deleted.stdout) || "Failed to delete snippet",
+      "UNKNOWN",
+    );
+  }
+  return output(false);
 }
 
 // ---------------------------------------------------------------------------

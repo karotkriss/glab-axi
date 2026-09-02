@@ -275,6 +275,12 @@ describe("what the guard must not break", () => {
     expect(glApiMock).not.toHaveBeenCalled();
   });
 
+  it("accepts an explicit empty value and reaches the handler", async () => {
+    const { code } = await cli("snippet", "edit", "13", "--description=");
+    expect(code).toBe(0);
+    expect(glApiMock).toHaveBeenCalled();
+  });
+
   // Regression: --template takes a value (`--template owner/repo`, mirroring
   // gh) and must reach its own "template not supported" refusal in both the
   // bare and equals forms - not the boolean-equals error, which would wrongly
