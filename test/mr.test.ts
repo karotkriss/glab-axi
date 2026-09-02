@@ -643,6 +643,17 @@ describe("mr approve / comment", () => {
 });
 
 describe("mr checks", () => {
+  // mr checks now reads the project's only_allow_merge_if_pipeline_succeeds via
+  // glApiResult; default it to "blocking" so the pipeline_blocks_merge line has
+  // a source. Individual tests override it to assert the field.
+  beforeEach(() => {
+    glApiResultMock.mockResolvedValue({
+      exitCode: 0,
+      stdout: JSON.stringify({ only_allow_merge_if_pipeline_succeeds: true }),
+      stderr: "",
+    });
+  });
+
   it("renders the aggregate pass/fail counts + verdict for the MR pipeline", async () => {
     glApiMock.mockResolvedValueOnce(
       mr({ head_pipeline: { id: 999, status: "failed" } }),
@@ -657,6 +668,49 @@ describe("mr checks", () => {
     expect(out).toContain("verdict: failing");
     // Jobs fetched from the head pipeline's id.
     expect(glApiMock.mock.calls[1][0]).toContain("/pipelines/999/jobs");
+  });
+
+  it("reports pipeline_blocks_merge yes when the project setting is enabled", async () => {
+    glApiMock.mockResolvedValueOnce(
+      mr({ head_pipeline: { id: 999, status: "failed" } }),
+    );
+    glApiMock.mockResolvedValueOnce([
+      { status: "failed", allow_failure: false },
+    ]);
+    const out = await mrCommand(["checks", "42"], ctx);
+    expect(out).toContain("pipeline_blocks_merge: yes");
+  });
+
+  it("reports pipeline_blocks_merge no when a red pipeline is merely advisory", async () => {
+    glApiResultMock.mockResolvedValue({
+      exitCode: 0,
+      stdout: JSON.stringify({ only_allow_merge_if_pipeline_succeeds: false }),
+      stderr: "",
+    });
+    glApiMock.mockResolvedValueOnce(
+      mr({ head_pipeline: { id: 999, status: "failed" } }),
+    );
+    glApiMock.mockResolvedValueOnce([
+      { status: "failed", allow_failure: false },
+    ]);
+    const out = await mrCommand(["checks", "42"], ctx);
+    expect(out).toContain("pipeline_blocks_merge: no");
+  });
+
+  it("reports pipeline_blocks_merge unavailable when the project read fails, never a guessed no", async () => {
+    glApiResultMock.mockResolvedValue({
+      exitCode: 1,
+      stdout: "",
+      stderr: "403 Forbidden",
+    });
+    glApiMock.mockResolvedValueOnce(
+      mr({ head_pipeline: { id: 999, status: "failed" } }),
+    );
+    glApiMock.mockResolvedValueOnce([
+      { status: "failed", allow_failure: false },
+    ]);
+    const out = await mrCommand(["checks", "42"], ctx);
+    expect(out).toContain("pipeline_blocks_merge: unavailable");
   });
 
   it("counts running jobs and reports a running verdict", async () => {
@@ -694,6 +748,17 @@ describe("mr checks", () => {
 });
 
 describe("mr view --reviews", () => {
+  // --reviews now folds in the project's only_allow_merge_if_pipeline_succeeds
+  // (via glApiResult) as pipeline_blocks_merge; default it so the extra read has
+  // a source.
+  beforeEach(() => {
+    glApiResultMock.mockResolvedValue({
+      exitCode: 0,
+      stdout: JSON.stringify({ only_allow_merge_if_pipeline_succeeds: true }),
+      stderr: "",
+    });
+  });
+
   it("surfaces approval state and thread resolution", async () => {
     glApiMock.mockResolvedValueOnce(mr()); // GET mr
     glApiMock.mockResolvedValueOnce({
@@ -714,6 +779,8 @@ describe("mr view --reviews", () => {
     expect(out).toContain("approvals: 1/2");
     expect(out).toContain("approved_by: alice");
     expect(out).toContain("2 total, 1 resolved, 1 unresolved");
+    // The merge-gating consequence of the pipeline is folded in.
+    expect(out).toContain("pipeline_blocks_merge: yes");
   });
 
   it("reports approved when the GitLab `approved` bool is present", async () => {
@@ -961,5 +1028,98 @@ describe("mr merge failure diagnosis (AXI clause 6 + 9)", () => {
   it("costs no extra call - the diagnosis reuses the idempotency GET", async () => {
     await mergeError({ detailed_merge_status: "conflict" });
     expect(glApiMock).toHaveBeenCalledTimes(2);
+  });
+
+  // A 401 on the merge PUT, when the reads in the same command already worked,
+  // is a permission denial (no merge rights on the protected branch), not an
+  // auth problem - reporting AUTH_REQUIRED sends the caller into a re-auth loop
+  // that cannot fix it.
+  it("reports a 401 on the merge as FORBIDDEN (permission), not AUTH_REQUIRED", async () => {
+    glApiMock.mockResolvedValueOnce({
+      iid: 1,
+      state: "opened",
+      source_branch: "feat",
+      target_branch: "main",
+    }); // GET mr (idempotency) succeeds
+    glApiMock.mockRejectedValueOnce(
+      new AxiError(
+        "GitLab authentication required for this host",
+        "AUTH_REQUIRED",
+      ),
+    ); // merge PUT 401
+    // The token still works (names the account), and the target branch is
+    // confirmed protected.
+    glApiResultMock.mockResolvedValueOnce({
+      exitCode: 0,
+      stdout: JSON.stringify({ username: "test-user" }),
+      stderr: "",
+    }); // GET /user
+    glApiResultMock.mockResolvedValueOnce({
+      exitCode: 0,
+      stdout: JSON.stringify({ name: "main" }),
+      stderr: "",
+    }); // GET /protected_branches/main
+    const err = (await mrCommand(["merge", "1"], ctx).catch(
+      (e) => e,
+    )) as AxiError;
+    expect(err.code).toBe("FORBIDDEN");
+    expect(err.message).toContain("test-user");
+    expect(err.message).toContain("protected branch main");
+    expect(err.message).not.toContain("authentication required");
+  });
+
+  it("keeps AUTH_REQUIRED when the token genuinely does not work (even /user 401s)", async () => {
+    glApiMock.mockResolvedValueOnce({
+      iid: 1,
+      state: "opened",
+      source_branch: "feat",
+      target_branch: "main",
+    });
+    glApiMock.mockRejectedValueOnce(
+      new AxiError(
+        "GitLab authentication required for this host",
+        "AUTH_REQUIRED",
+      ),
+    );
+    glApiResultMock.mockResolvedValueOnce({
+      exitCode: 1,
+      stdout: "",
+      stderr: "401 Unauthorized",
+    }); // GET /user also fails
+    const err = (await mrCommand(["merge", "1"], ctx).catch(
+      (e) => e,
+    )) as AxiError;
+    expect(err.code).toBe("AUTH_REQUIRED");
+  });
+
+  it("does not over-claim 'protected' when the branch protection cannot be confirmed", async () => {
+    glApiMock.mockResolvedValueOnce({
+      iid: 1,
+      state: "opened",
+      source_branch: "feat",
+      target_branch: "main",
+    });
+    glApiMock.mockRejectedValueOnce(
+      new AxiError(
+        "GitLab authentication required for this host",
+        "AUTH_REQUIRED",
+      ),
+    );
+    glApiResultMock.mockResolvedValueOnce({
+      exitCode: 0,
+      stdout: JSON.stringify({ username: "test-user" }),
+      stderr: "",
+    }); // GET /user ok
+    glApiResultMock.mockResolvedValueOnce({
+      exitCode: 1,
+      stdout: "",
+      stderr: "404 Not Found",
+    }); // GET /protected_branches/main → not protected / not readable
+    const err = (await mrCommand(["merge", "1"], ctx).catch(
+      (e) => e,
+    )) as AxiError;
+    expect(err.code).toBe("FORBIDDEN");
+    expect(err.message).toContain("not permitted to merge into main");
+    expect(err.message).not.toContain("protected");
   });
 });
