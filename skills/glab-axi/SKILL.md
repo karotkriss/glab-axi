@@ -51,7 +51,7 @@ Run `npx -y glab-axi@0.6.0 --help` for global flags, or `npx -y glab-axi@0.6.0 <
 
 - Output is TOON-encoded and token-efficient; pipe through grep/head only when a list is very long.
 - Merge requests and issues are addressed by their project-scoped IID (the number in the URL), not the global id.
-- Mutations are idempotent and report what changed; re-running a merged/closed mutation is a safe no-op.
+- Edit, update, and delete mutations are idempotent and report what changed; inherently non-idempotent POST creates make another resource when retried.
 - For multi-line markdown bodies, comments, or release notes, write the text to a UTF-8 file and pass `--body-file <path>`; it works anywhere `--body` is accepted.
 - Secret values are stdin-only: `printf %s "<value>" | npx -y glab-axi@0.6.0 secret set <name>`.
 - Do not pass secret values via flags; flags are visible in the process argv. (`variable set` may use `--value` or stdin because plain CI/CD variables are not secret.)

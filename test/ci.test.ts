@@ -718,8 +718,8 @@ describe("ci lint", () => {
   });
 
   /** Write a config file and return its path. */
-  function config(content: string): string {
-    const p = join(dir, ".gitlab-ci.yml");
+  function config(content: string, name = ".gitlab-ci.yml"): string {
+    const p = join(dir, name);
     writeFileSync(p, content);
     return p;
   }
@@ -758,12 +758,12 @@ describe("ci lint", () => {
       errors: ["jobs:build config contains unknown keys: bogus"],
       warnings: [],
     });
-    const path = config("build:\n  bogus: true\n");
+    const path = config("build:\n  bogus: true\n", "release candidate.yml");
     const out = await ciCommand(["lint", path, "--ref", "release"], ctx);
     expect(out).toContain("valid: no");
     expect(out).toContain("unknown keys");
     expect(out).toContain("-R gitlab.example.com/group/project");
-    expect(out).toContain(`glab-axi ci lint ${path} --ref release`);
+    expect(out).toContain(`glab-axi ci lint '${path}' --ref 'release'`);
     expect(process.exitCode).toBe(1);
   });
 

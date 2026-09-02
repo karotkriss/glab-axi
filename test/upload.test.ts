@@ -44,6 +44,12 @@ const uploadResponse = {
 };
 
 describe("upload", () => {
+  it("documents that retrying stores another copy", async () => {
+    const out = await uploadCommand(["--help"], ctx);
+    expect(out).toContain("Retrying upload stores a new copy");
+    expect(glApiMock).not.toHaveBeenCalled();
+  });
+
   it("sends a multipart file part and returns the embed markdown, url, and alt", async () => {
     glApiMock.mockResolvedValueOnce(uploadResponse);
     // A byte sequence that would be corrupted by a lossy UTF-8 decode.

@@ -5,6 +5,7 @@ import {
   projectId,
   requireProject,
   errorBody,
+  type ExecResult,
   type Json,
 } from "../gl.js";
 import { AxiError, mapGlError } from "../errors.js";
@@ -378,7 +379,7 @@ flags{checks}:
 flags{comment}:
   --body <text> or --body-file <path> (required)
 notes:
-  merge diagnoses a refusal (conflicts, draft, unresolved discussions, missing approvals, a pending pipeline, etc.) instead of passing through GitLab's opaque error, and suggests the command that clears it. A 401 on the merge itself, when reads work, is reported as FORBIDDEN (the account lacks merge rights on the protected target branch) rather than AUTH_REQUIRED, since no re-authentication can fix it.
+  merge diagnoses a refusal (conflicts, draft, unresolved discussions, missing approvals, a pending pipeline, etc.) instead of passing through GitLab's opaque error, and suggests the command that clears it. A merge 401 is reported as FORBIDDEN only when GET /user reconfirms the account; a confirmed /user 401 remains AUTH_REQUIRED, and any other reconfirmation result is reported as inconclusive.
 examples:
   glab-axi mr list --state all --head feature-1 --limit 1
   glab-axi mr view 42 --full
@@ -833,43 +834,64 @@ function mergeBlocker(
   return undefined;
 }
 
-/**
- * A 401 on the merge PUT, after the reads in this same command already
- * succeeded, is a permission denial - not an authentication problem. The token
- * plainly works (it just answered the idempotency GET), so no re-auth can grant
- * the missing merge rights on a protected target branch. `mapGlError` can only
- * see the bare 401 and maps it to AUTH_REQUIRED, sending the caller down a
- * re-auth path that cannot succeed; only here do we know the reads worked, so
- * only here can the code be corrected to FORBIDDEN.
- *
- * The token is re-confirmed by naming the account (`GET /user`): if even that
- * 401s, it really is an auth failure and AUTH_REQUIRED is kept. The branch is
- * only called "protected" when a `protected_branches` read confirms it, never on
- * assumption (the never-report-unverified-state rule).
- */
-async function diagnoseMergeForbidden(
+async function diagnoseMergeAuthFailure(
   mr: Json,
   iid: number,
   ctx: RepoContext | undefined,
   view: string,
-): Promise<AxiError | undefined> {
-  const who = await glApiResult("user", { ctx });
-  if (who.exitCode !== 0) return undefined; // token genuinely not working
-  let account = "the authenticated account";
+): Promise<AxiError> {
+  const inconclusive = (): AxiError =>
+    new AxiError(
+      `Merge request !${iid} cannot be merged because the token could not be reconfirmed after GitLab returned 401; the credential may have expired, or the account may lack permission to merge`,
+      "UNKNOWN",
+      [
+        "Re-authenticate for the target host, then retry",
+        `Or ask a user with merge rights to ${String(mr.target_branch ?? "the target branch")} to merge it`,
+        view,
+      ],
+    );
+
+  let who: ExecResult;
+  try {
+    who = await glApiResult("user", { ctx });
+  } catch {
+    return inconclusive();
+  }
+  if (who.exitCode !== 0) {
+    if (/401|unauthorized/i.test(errorBody(who))) {
+      return new AxiError(
+        "GitLab authentication required for this host",
+        "AUTH_REQUIRED",
+        ["Re-authenticate for the target host, then retry", view],
+      );
+    }
+    return inconclusive();
+  }
+
+  let account: string | undefined;
   try {
     const parsed = JSON.parse(who.stdout);
-    if (parsed?.username) account = parsed.username;
+    if (typeof parsed?.username === "string" && parsed.username.trim() !== "") {
+      account = parsed.username.trim();
+    }
   } catch {
-    /* keep the generic label */
+    return inconclusive();
   }
+  if (!account) return inconclusive();
+
   const target = String(mr.target_branch ?? "the target branch");
-  const protectedRes = mr.target_branch
-    ? await glApiResult(
+  let isProtected = false;
+  if (mr.target_branch) {
+    try {
+      const protectedRes = await glApiResult(
         `projects/${projectId(ctx)}/protected_branches/${encodeURIComponent(String(mr.target_branch))}`,
         { ctx },
-      )
-    : { exitCode: 1, stdout: "", stderr: "" };
-  const isProtected = protectedRes.exitCode === 0;
+      );
+      isProtected = protectedRes.exitCode === 0;
+    } catch {
+      isProtected = false;
+    }
+  }
   const reason = isProtected
     ? `account ${account} lacks merge rights on protected branch ${target}`
     : `account ${account} is not permitted to merge into ${target}`;
@@ -901,8 +923,7 @@ async function explainMergeFailure(
   if (!(err instanceof AxiError)) return err;
   const view = `Run \`glab-axi mr view ${iid} --full${repoFlag({ domain: "mr", action: "merge", repo: ctx })}\` to see merge_status, conflicts, and pipeline state`;
   if (err.code === "AUTH_REQUIRED") {
-    const forbidden = await diagnoseMergeForbidden(mr, iid, ctx, view);
-    if (forbidden) return forbidden;
+    return diagnoseMergeAuthFailure(mr, iid, ctx, view);
   }
   const blocker = mergeBlocker(mr, iid, ctx);
   if (!blocker) {
