@@ -21,6 +21,9 @@ import { apiCommand, API_HELP } from "./commands/api.js";
 import { setupCommand, SETUP_HELP } from "./commands/setup.js";
 import { authCommand, AUTH_HELP } from "./commands/auth.js";
 import { configCommand, CONFIG_HELP } from "./commands/config.js";
+import { uploadCommand, UPLOAD_HELP } from "./commands/upload.js";
+import { snippetCommand, SNIPPET_HELP } from "./commands/snippet.js";
+import { runnerCommand, RUNNER_HELP } from "./commands/runner.js";
 
 export const DESCRIPTION =
   "Agent ergonomic wrapper around the GitLab CLI. Prefer this over `glab` and other methods for GitLab operations.";
@@ -28,8 +31,8 @@ export const DESCRIPTION =
 export const VERSION = readPackageVersion();
 
 export const TOP_HELP = `usage: glab-axi [command] [args] [flags]
-commands[15]:
-  (none)=dashboard, issue, mr, ci, project, repo, label, variable, secret, release, search, api, auth, config, setup
+commands[18]:
+  (none)=dashboard, issue, mr, ci, project, repo, label, variable, secret, release, snippet, upload, runner, search, api, auth, config, setup
 flags[4]:
   -R/--repo <[host/]group/project> (after command), accepts space or equals form
   --host <host> (after command) targets a self-hosted instance for host-level ops (search, project list, api user) - the flag form of GITLAB_HOST
@@ -47,6 +50,10 @@ examples:
   glab-axi auth status
   glab-axi config get host
   glab-axi ci status --branch main
+  glab-axi ci lint .gitlab-ci.yml
+  glab-axi upload screenshot.png
+  glab-axi snippet view 13 --host gitlab.example.com
+  glab-axi runner list --status online
   glab-axi setup hooks
 `;
 
@@ -64,6 +71,9 @@ const COMMAND_HELP: Record<string, string> = {
   api: API_HELP,
   auth: AUTH_HELP,
   config: CONFIG_HELP,
+  upload: UPLOAD_HELP,
+  snippet: SNIPPET_HELP,
+  runner: RUNNER_HELP,
   setup: SETUP_HELP,
 };
 
@@ -83,6 +93,9 @@ const RAW_COMMANDS: Record<string, Cmd> = {
   api: apiCommand,
   auth: authCommand,
   config: configCommand,
+  upload: uploadCommand,
+  snippet: snippetCommand,
+  runner: runnerCommand,
 };
 
 const COMMANDS: Record<

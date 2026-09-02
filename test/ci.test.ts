@@ -3,6 +3,7 @@ import {
   readdirSync,
   mkdirSync,
   mkdtempSync,
+  writeFileSync,
   chmodSync,
   symlinkSync,
   rmSync,
@@ -704,5 +705,71 @@ describe("ci log token efficiency (AXI clause 1)", () => {
     const out = await ciCommand(["log", "48021"], ctx);
     expect(out).toContain("truncated: false");
     expect(out).not.toContain("full_log");
+  });
+});
+
+describe("ci lint", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "glab-axi-lint-test-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** Write a config file and return its path. */
+  function config(content: string): string {
+    const p = join(dir, ".gitlab-ci.yml");
+    writeFileSync(p, content);
+    return p;
+  }
+
+  it("reports valid: yes and sends the config as a JSON body to ci/lint", async () => {
+    glApiMock.mockResolvedValueOnce({ valid: true, errors: [], warnings: [] });
+    const path = config("build:\n  script: echo hi\n");
+    const out = await ciCommand(["lint", path], ctx);
+    expect(out).toContain("valid: yes");
+    // Posts to the project's ci/lint endpoint...
+    const [callPath, opts] = glApiMock.mock.calls[0];
+    expect(callPath).toContain(`projects/${PID}/ci/lint`);
+    expect(opts.method).toBe("POST");
+    // ...with the file content as a JSON request body (not -f/-F form fields).
+    expect(opts.body.contentType).toBe("application/json");
+    expect(JSON.parse(opts.body.content).content).toContain("script: echo hi");
+    expect(process.exitCode).toBe(0);
+  });
+
+  it("reports valid: no with the errors and exits non-zero", async () => {
+    glApiMock.mockResolvedValueOnce({
+      valid: false,
+      errors: ["jobs:build config contains unknown keys: bogus"],
+      warnings: [],
+    });
+    const path = config("build:\n  bogus: true\n");
+    const out = await ciCommand(["lint", path], ctx);
+    expect(out).toContain("valid: no");
+    expect(out).toContain("unknown keys");
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("prints the merged YAML only with --merged", async () => {
+    glApiMock.mockResolvedValue({
+      valid: true,
+      errors: [],
+      warnings: [],
+      merged_yaml: "---\nbuild:\n  script: echo hi\n",
+    });
+    const path = config("build:\n  script: echo hi\n");
+    const plain = await ciCommand(["lint", path], ctx);
+    expect(plain).not.toContain("merged_yaml");
+    const merged = await ciCommand(["lint", path, "--merged"], ctx);
+    expect(merged).toContain("merged_yaml");
+  });
+
+  it("defaults the path to .gitlab-ci.yml and errors clearly when it is missing", async () => {
+    // No file at the default path in this temp dir - resolve against dir/cwd.
+    await expect(
+      ciCommand(["lint", join(dir, "nope.yml")], ctx),
+    ).rejects.toThrow(/CI config not found/);
   });
 });
