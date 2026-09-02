@@ -736,8 +736,20 @@ describe("ci lint", () => {
     expect(opts.method).toBe("POST");
     // ...with the file content as a JSON request body (not -f/-F form fields).
     expect(opts.body.contentType).toBe("application/json");
-    expect(JSON.parse(opts.body.content).content).toContain("script: echo hi");
+    const body = JSON.parse(opts.body.content);
+    expect(body.content).toContain("script: echo hi");
+    expect(body).not.toHaveProperty("dry_run");
     expect(process.exitCode).toBe(0);
+  });
+
+  it("enables dry-run pipeline simulation when validating on a ref", async () => {
+    glApiMock.mockResolvedValueOnce({ valid: true, errors: [], warnings: [] });
+    const path = config("build:\n  script: echo hi\n");
+    await ciCommand(["lint", path, "--ref", "feature"], ctx);
+    expect(JSON.parse(glApiMock.mock.calls[0][1].body.content)).toMatchObject({
+      ref: "feature",
+      dry_run: true,
+    });
   });
 
   it("reports valid: no with the errors and exits non-zero", async () => {
@@ -747,10 +759,11 @@ describe("ci lint", () => {
       warnings: [],
     });
     const path = config("build:\n  bogus: true\n");
-    const out = await ciCommand(["lint", path], ctx);
+    const out = await ciCommand(["lint", path, "--ref", "release"], ctx);
     expect(out).toContain("valid: no");
     expect(out).toContain("unknown keys");
     expect(out).toContain("-R gitlab.example.com/group/project");
+    expect(out).toContain(`glab-axi ci lint ${path} --ref release`);
     expect(process.exitCode).toBe(1);
   });
 
