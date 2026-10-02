@@ -381,3 +381,105 @@ describe("api --raw / --json", () => {
     expect(runJqMock).not.toHaveBeenCalled();
   });
 });
+
+describe("api array parameters (key[]=value)", () => {
+  function sentJson() {
+    const [, opts] = glApiResultMock.mock.calls[0];
+    expect(opts.fields).toBeUndefined();
+    expect(opts.rawFields).toBeUndefined();
+    expect(opts.body.contentType).toBe("application/json");
+    return JSON.parse(opts.body.content);
+  }
+
+  it("sends a personal access token's scopes as a JSON array", async () => {
+    glApiResultMock.mockResolvedValueOnce(ok({ id: 1 }));
+    await apiCommand(
+      [
+        "POST",
+        "users/12/personal_access_tokens",
+        "--raw-field",
+        "name=ci",
+        "--raw-field",
+        "scopes[]=api",
+        "--raw-field",
+        "scopes[]=read_repository",
+        "--field",
+        "expires_at=2026-12-31",
+      ],
+      ctx,
+    );
+    expect(glApiResultMock.mock.calls[0][0]).toBe(
+      "users/12/personal_access_tokens",
+    );
+    expect(sentJson()).toEqual({
+      expires_at: "2026-12-31",
+      name: "ci",
+      scopes: ["api", "read_repository"],
+    });
+  });
+
+  it("keeps --field type inference inside the JSON body", async () => {
+    glApiResultMock.mockResolvedValueOnce(ok({ iid: 7 }));
+    await apiCommand(
+      [
+        "PUT",
+        "projects/{project}/issues/7",
+        "--field",
+        "assignee_ids[]=12",
+        "--field",
+        "assignee_ids[]=34",
+        "--field",
+        "confidential=true",
+        "--raw-field",
+        "labels[]=007",
+      ],
+      ctx,
+    );
+    expect(glApiResultMock.mock.calls[0][0]).toBe(`projects/${PID}/issues/7`);
+    expect(sentJson()).toEqual({
+      assignee_ids: [12, 34],
+      confidential: true,
+      labels: ["007"],
+    });
+  });
+
+  it("puts a GET's arrays in the query string with every value kept", async () => {
+    glApiResultMock.mockResolvedValueOnce(ok([]));
+    await apiCommand(
+      [
+        "projects/{project}/issues?scope=all",
+        "--field",
+        "iids[]=1",
+        "--field",
+        "iids[]=2",
+        "--raw-field",
+        "state=opened",
+      ],
+      ctx,
+    );
+    const [path, opts] = glApiResultMock.mock.calls[0];
+    expect(path).toBe(
+      `projects/${PID}/issues?scope=all&iids%5B%5D=1&iids%5B%5D=2&state=opened`,
+    );
+    expect(opts.fields).toBeUndefined();
+    expect(opts.body).toBeUndefined();
+  });
+
+  it("leaves requests without an array parameter on plain fields", async () => {
+    glApiResultMock.mockResolvedValueOnce(ok({ id: 1 }));
+    await apiCommand(
+      ["POST", "projects/{project}/issues", "--raw-field", "title=Bug"],
+      ctx,
+    );
+    const [, opts] = glApiResultMock.mock.calls[0];
+    expect(opts.rawFields).toEqual(["title=Bug"]);
+    expect(opts.body).toBeUndefined();
+  });
+
+  it("rejects an array parameter with no '='", async () => {
+    await expect(
+      apiCommand(["POST", "x", "--field", "scopes[]"], ctx),
+    ).rejects.toThrow("--field must be key=value");
+    expect(glApiResultMock).not.toHaveBeenCalled();
+  });
+});

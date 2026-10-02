@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { encode } from "@toon-format/toon";
 import { glApiResult, projectId, errorBody, type Json } from "../gl.js";
 import { AxiError, mapGlError } from "../errors.js";
@@ -73,10 +74,17 @@ flags:
   --paginate         follow pagination and aggregate all pages
   --jq <expr>        extract a value from the raw JSON via jq (-r); takes precedence over --raw
   --raw, --json      print the raw JSON response verbatim instead of TOON
+arrays:
+  Name a key with [] (key[]=value) and repeat it to send an array, e.g. scopes,
+  assignee_ids, iids or labels. A GET sends key[]= in the query string; any
+  other method sends all parameters as a JSON body with each key[] collected
+  into a real array (--field values keep their inferred types).
 examples:
   glab-axi api projects/{project}/members
   glab-axi api GET projects/{project}/merge_requests --field state=opened
   glab-axi api POST projects/{project}/issues --raw-field title="Bug" --raw-field description="Details"
+  glab-axi api PUT projects/{project}/issues/7 --field "assignee_ids[]=12" --field "assignee_ids[]=34"
+  glab-axi api projects/{project}/issues --field "iids[]=1" --field "iids[]=2"
   glab-axi api projects/{project}/merge_requests/5 --jq .state
   glab-axi api projects/{project} --raw`;
 
@@ -122,6 +130,78 @@ function stripNoisyFields(obj: Json, depth = 0): Json {
     return cleaned;
   }
   return obj;
+}
+
+// ---------------------------------------------------------------------------
+// Array parameters
+// ---------------------------------------------------------------------------
+
+const ARRAY_KEY = /^(.+)\[\]$/;
+
+function splitParam(flag: string, param: string): [string, string] {
+  const eq = param.indexOf("=");
+  if (eq <= 0) {
+    throw new AxiError(
+      `${flag} must be key=value: ${param}`,
+      "VALIDATION_ERROR",
+    );
+  }
+  return [param.slice(0, eq), param.slice(eq + 1)];
+}
+
+/** Infer a --field value's type the way the wrapped CLI does for -F. */
+function typedValue(value: string): unknown {
+  if (value.startsWith("@")) {
+    const file = value.slice(1);
+    return readFileSync(file === "-" ? 0 : file, "utf8");
+  }
+  if (/^[+-]?\d+$/.test(value)) return Number(value);
+  if (value === "true") return true;
+  if (value === "false") return false;
+  if (value === "null") return null;
+  return value;
+}
+
+/**
+ * Encode the parameters ourselves when any names an array (`key[]=value`).
+ * The wrapped CLI sends fields as a flat map keyed by the literal name: a POST
+ * body carries `{"scopes[]": "api"}`, which GitLab reads as `scopes` missing,
+ * and a repeated key keeps only its last value. GET/HEAD get a query string
+ * with every `key[]=` repeated; any other method gets a JSON body in which each
+ * `key[]` collects into a real array. Returns undefined when no field is an
+ * array, leaving the plain path unchanged.
+ */
+export function encodeArrayParams(
+  method: string,
+  path: string,
+  fields: string[],
+  rawFields: string[],
+): { path: string; json?: string } | undefined {
+  const params = [
+    ...fields.map((f) => [...splitParam("--field", f), true] as const),
+    ...rawFields.map((f) => [...splitParam("--raw-field", f), false] as const),
+  ];
+  if (!params.some(([key]) => ARRAY_KEY.test(key))) return undefined;
+
+  if (method === "GET" || method === "HEAD") {
+    const query = new URLSearchParams(
+      params.map(([key, value]): [string, string] => [key, value]),
+    ).toString();
+    return { path: `${path}${path.includes("?") ? "&" : "?"}${query}` };
+  }
+
+  const body: Record<string, unknown> = Object.create(null);
+  for (const [key, raw, typed] of params) {
+    const value = typed ? typedValue(raw) : raw;
+    const array = ARRAY_KEY.exec(key);
+    if (!array) {
+      body[key] = value;
+      continue;
+    }
+    const existing = body[array[1]];
+    body[array[1]] = Array.isArray(existing) ? [...existing, value] : [value];
+  }
+  return { path, json: JSON.stringify(body) };
 }
 
 // ---------------------------------------------------------------------------
@@ -185,14 +265,21 @@ export async function apiCommand(
   const { method, path: rawPath } = parseMethodAndPath(positionals);
   const path = rawPath.replace(/\{project\}/g, projectId(ctx));
 
-  const result = await glApiResult(path, {
-    method,
-    fields,
-    rawFields,
-    headers,
-    paginate,
-    ctx,
-  });
+  const arrays = encodeArrayParams(method, path, fields, rawFields);
+  const result = await glApiResult(
+    arrays?.path ?? path,
+    arrays
+      ? {
+          method,
+          headers,
+          paginate,
+          ctx,
+          ...(arrays.json !== undefined && {
+            body: { content: arrays.json, contentType: "application/json" },
+          }),
+        }
+      : { method, fields, rawFields, headers, paginate, ctx },
+  );
 
   if (result.exitCode !== 0) {
     throw mapGlError(errorBody(result), result.exitCode);

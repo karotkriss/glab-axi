@@ -326,6 +326,51 @@ describe("mr merge", () => {
     expect(mergeCall[1].fields).toContain("squash=true");
   });
 
+  it("--sha pins the merge to the verified head commit", async () => {
+    const head = "a".repeat(40);
+    glApiMock.mockResolvedValueOnce(mr()); // state check
+    glApiMock.mockResolvedValueOnce(mr({ state: "merged" })); // merge
+    await mrCommand(["merge", "42", "--sha", head], ctx);
+    const mergeCall = glApiMock.mock.calls[1];
+    expect(mergeCall[0]).toContain("/merge");
+    expect(mergeCall[1].rawFields).toContain(`sha=${head}`);
+  });
+
+  it("--sha fails with CONFLICT when a push moved the head, never merging", async () => {
+    const pinned = "a".repeat(40);
+    glApiMock.mockResolvedValueOnce(
+      mr({ detailed_merge_status: "ci_still_running" }),
+    );
+    glApiMock.mockRejectedValueOnce(
+      new AxiError(
+        `SHA does not match HEAD of source branch: ${"b".repeat(40)}`,
+        "CONFLICT",
+      ),
+    );
+    const err = (await mrCommand(["merge", "42", "--sha", pinned], ctx).catch(
+      (e: unknown) => e,
+    )) as AxiError;
+    expect(err.code).toBe("CONFLICT");
+    // The moved head is reported as such, not as the pipeline still running.
+    expect(err.message).toContain(`not the pinned ${pinned}`);
+    expect(err.message).not.toContain("pipeline");
+    expect(err.suggestions.join("\n")).toContain("glab-axi mr checks 42");
+  });
+
+  it("rejects a --sha that is not a full commit SHA before any request", async () => {
+    await expect(
+      mrCommand(["merge", "42", "--sha", "abc1234"], ctx),
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(glApiMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses --sha with --rebase, since the rebase replaces the head", async () => {
+    await expect(
+      mrCommand(["merge", "42", "--rebase", "--sha", "a".repeat(40)], ctx),
+    ).rejects.toThrow("--sha cannot be combined with --rebase");
+    expect(glApiMock).not.toHaveBeenCalled();
+  });
+
   it("rebase rebases, polls, then merges", async () => {
     glApiMock.mockResolvedValueOnce(mr()); // state check
     glApiMock.mockResolvedValueOnce({}); // rebase PUT

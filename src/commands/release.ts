@@ -235,23 +235,23 @@ async function releaseCreate(
   const assets = takeAllFlags(args, "--asset").map(parseAsset);
   const tag = requireTag(args);
 
-  const rawFields = [`tag_name=${tag}`];
-  if (name) rawFields.push(`name=${name}`);
-  if (body !== undefined) rawFields.push(`description=${body}`);
-  if (ref) rawFields.push(`ref=${ref}`);
-  if (prerelease) rawFields.push(`released_at=${PRERELEASE_RELEASED_AT}`);
-  for (const asset of assets) {
-    // Emit name then url per asset: GitLab's Rails param parser starts a new
-    // link object when it sees a subkey (`name`) that the current one already
-    // has, so paired name/url runs group into distinct links.
-    rawFields.push(`assets[links][][name]=${asset.name}`);
-    rawFields.push(`assets[links][][url]=${asset.url}`);
-  }
+  // Send JSON: `assets.links` is an array of {name, url} objects, which glab's
+  // flat form fields cannot express - `assets[links][][name]=...` reached GitLab
+  // as a literal key and every link was silently dropped.
+  const payload: Record<string, unknown> = { tag_name: tag };
+  if (name) payload.name = name;
+  if (body !== undefined) payload.description = body;
+  if (ref) payload.ref = ref;
+  if (prerelease) payload.released_at = PRERELEASE_RELEASED_AT;
+  if (assets.length > 0) payload.assets = { links: assets };
 
   try {
     const release = await glApi<Json>(releasesPath(ctx), {
       method: "POST",
-      rawFields,
+      body: {
+        content: JSON.stringify(payload),
+        contentType: "application/json",
+      },
       ctx,
     });
     const created: Record<string, unknown> = {
@@ -264,7 +264,10 @@ async function releaseCreate(
       createdFields.push(field("upcoming"));
     }
     if (assets.length > 0) {
-      created.assets = assets.length;
+      // Count the links GitLab stored, not the ones requested.
+      created.assets = Array.isArray(release.assets?.links)
+        ? release.assets.links.length
+        : "unavailable - the response carried no asset links";
       createdFields.push(field("assets"));
     }
     return renderOutput([

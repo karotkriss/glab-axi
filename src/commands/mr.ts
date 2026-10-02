@@ -371,7 +371,7 @@ flags{create}:
 flags{update,edit}:
   --title, --body or --body-file, --label, --milestone <name>, --assignee <user>, --target-branch, --ready! (clear Draft), --draft! (mark Draft), --close!, --reopen!
 flags{merge}:
-  --method <merge|squash|rebase>, --merge!, --squash!, --rebase!, --auto! (merge when the pipeline succeeds), --remove-source-branch!/--delete-branch!, --body or --body-file (merge commit message); accepts an MR URL in place of the iid
+  --method <merge|squash|rebase>, --merge!, --squash!, --rebase!, --auto! (merge when the pipeline succeeds), --remove-source-branch!/--delete-branch!, --sha <commit> (merge only if the source head is still this full sha), --body or --body-file (merge commit message); accepts an MR URL in place of the iid
 flags{approve,unapprove}:
   (none) - GitLab models review as an approval plus discussion threads, so there is no \`mr review\`: approve/unapprove for the verdict, comment for feedback
 flags{checks}:
@@ -380,6 +380,7 @@ flags{comment}:
   --body <text> or --body-file <path> (required)
 notes:
   merge diagnoses a refusal (conflicts, draft, unresolved discussions, missing approvals, a pending pipeline, etc.) instead of passing through GitLab's opaque error, and suggests the command that clears it. A merge 401 is reported as FORBIDDEN only when GET /user reconfirms the account; a confirmed /user 401 remains AUTH_REQUIRED, and any other reconfirmation result is reported as inconclusive.
+  merge --sha pins the merge to the head commit you verified (gh's --match-head-commit): if a push moved the source branch since, GitLab refuses the merge and it fails with CONFLICT instead of merging unverified code. It cannot be combined with --rebase, which replaces the head.
 examples:
   glab-axi mr list --state all --head feature-1 --limit 1
   glab-axi mr view 42 --full
@@ -393,6 +394,7 @@ examples:
   glab-axi mr create --title "Add X" --source-branch feat --target-branch main
   glab-axi mr merge 42 --squash --remove-source-branch
   glab-axi mr merge 42 --auto --squash
+  glab-axi mr merge 42 --squash --sha 0123456789abcdef0123456789abcdef01234567
   glab-axi mr update 42 --ready`;
 
 // ---------------------------------------------------------------------------
@@ -945,6 +947,7 @@ async function mrMerge(args: string[], ctx?: RepoContext): Promise<string> {
     takeBoolFlag(args, "--remove-source-branch") ||
     takeBoolFlag(args, "--delete-branch");
   const auto = takeBoolFlag(args, "--auto");
+  const sha = takeFlag(args, "--sha");
   const body = takeBody(args);
   // Resolve the MR reference the same way the read paths do (a bare IID or a
   // full MR URL that carries its own host/project), so `mr merge` and `mr view`
@@ -982,6 +985,24 @@ async function mrMerge(args: string[], ctx?: RepoContext): Promise<string> {
     throw new AxiError(
       "--rebase cannot be combined with --auto (auto-merge does not rebase)",
       "VALIDATION_ERROR",
+    );
+  }
+  if (sha !== undefined && !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(sha)) {
+    throw new AxiError(
+      "--sha must be the full head commit SHA (40 or 64 hex characters) the merge is pinned to",
+      "VALIDATION_ERROR",
+      [
+        `Run \`glab-axi mr view ${iid} --full${repoFlag({ domain: "mr", action: "merge", repo: ctx })}\` to read the head sha`,
+      ],
+    );
+  }
+  // A rebase rewrites the head commit, so a sha verified before it can never
+  // match the head the merge would see.
+  if (sha !== undefined && method === "rebase") {
+    throw new AxiError(
+      "--sha cannot be combined with --rebase (the rebase replaces the pinned head commit)",
+      "VALIDATION_ERROR",
+      ["Rebase first, verify the new head, then merge with --sha <new-head>"],
     );
   }
 
@@ -1029,6 +1050,9 @@ async function mrMerge(args: string[], ctx?: RepoContext): Promise<string> {
   // pipeline (or it already passed) GitLab merges immediately instead.
   if (auto) fields.push("merge_when_pipeline_succeeds=true");
   if (body !== undefined) rawFields.push(`merge_commit_message=${body}`);
+  // GitLab refuses the merge (409) unless the source branch head is still this
+  // commit, so a push landing after verification cannot be merged unverified.
+  if (sha !== undefined) rawFields.push(`sha=${sha}`);
 
   let merged: Json;
   try {
@@ -1039,6 +1063,21 @@ async function mrMerge(args: string[], ctx?: RepoContext): Promise<string> {
       ctx,
     });
   } catch (err) {
+    // A moved head is the pin doing its job; report it as such rather than
+    // letting mergeBlocker attribute it to whatever state the MR is in.
+    if (
+      sha !== undefined &&
+      err instanceof AxiError &&
+      /SHA does not match HEAD/i.test(err.message)
+    ) {
+      throw new AxiError(
+        `Merge request !${iid} was not merged: its source branch head is not the pinned ${sha} (${err.message})`,
+        "CONFLICT",
+        [
+          `Run \`glab-axi mr checks ${iid}${repoFlag({ domain: "mr", action: "merge", repo: ctx })}\` to verify the new head, then merge again with --sha <new-head>`,
+        ],
+      );
+    }
     throw await explainMergeFailure(err, mergeSnapshot, iid, ctx);
   }
   const help = renderHelp(

@@ -743,18 +743,22 @@ async function ciRun(args: string[], ctx?: RepoContext): Promise<string> {
       "Pass --ref <branch> to run the pipeline on a specific branch or tag",
     ]));
 
-  const rawFields = [`ref=${ref}`];
-  for (const v of variables) {
-    // Emit key then value per variable: GitLab's Rails param parser starts a
-    // new object once it sees a subkey the current one already has, so paired
-    // key/value runs group into distinct variables (same rule as release assets).
-    rawFields.push(`variables[][key]=${v.key}`);
-    rawFields.push(`variables[][value]=${v.value}`);
-  }
+  // Send JSON: GitLab reads `variables` as an array of {key, value} objects,
+  // which glab's flat form fields cannot express - `variables[][key]=A` reached
+  // GitLab as a literal key and the jobs saw every variable unset.
+  const payload: Record<string, unknown> = { ref };
+  if (variables.length > 0) payload.variables = variables;
 
   const pipeline = await glApi<Json>(
     `projects/${requireProject(ctx)}/pipeline`,
-    { method: "POST", rawFields, ctx },
+    {
+      method: "POST",
+      body: {
+        content: JSON.stringify(payload),
+        contentType: "application/json",
+      },
+      ctx,
+    },
   );
   return renderOutput([
     renderDetail("created", { ...pipeline, ref: pipeline?.ref ?? ref }, [
