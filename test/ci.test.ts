@@ -530,6 +530,14 @@ describe("ci cancel", () => {
 });
 
 describe("ci run", () => {
+  /** The JSON payload a ci run call sent (variables need a real array). */
+  function sentPayload(call: number) {
+    const opts = glApiMock.mock.calls[call][1];
+    expect(opts.body.contentType).toBe("application/json");
+    expect(opts.rawFields).toBeUndefined();
+    return JSON.parse(opts.body.content);
+  }
+
   it("POSTs a pipeline on the given ref", async () => {
     glApiMock.mockResolvedValueOnce({
       id: 999,
@@ -541,32 +549,30 @@ describe("ci run", () => {
     const [path, opts] = glApiMock.mock.calls[0];
     expect(path).toBe(`projects/${PID}/pipeline`);
     expect(opts.method).toBe("POST");
-    expect(opts.rawFields).toEqual(["ref=main"]);
+    expect(sentPayload(0)).toEqual({ ref: "main" });
     expect(out).toContain("created:");
     expect(out).toContain("999");
   });
 
-  it("emits key then value per --field so Rails groups the variables", async () => {
+  it("sends --field variables as an array of key/value objects", async () => {
     glApiMock.mockResolvedValueOnce({ id: 1, ref: "main", status: "created" });
     await ciCommand(
       ["run", "--ref", "main", "--field", "A=1", "--field", "B=2"],
       ctx,
     );
-    expect(glApiMock.mock.calls[0][1].rawFields).toEqual([
-      "ref=main",
-      "variables[][key]=A",
-      "variables[][value]=1",
-      "variables[][key]=B",
-      "variables[][value]=2",
-    ]);
+    expect(sentPayload(0)).toEqual({
+      ref: "main",
+      variables: [
+        { key: "A", value: "1" },
+        { key: "B", value: "2" },
+      ],
+    });
   });
 
   it("keeps '=' inside a --field value", async () => {
     glApiMock.mockResolvedValueOnce({ id: 1, ref: "main", status: "created" });
     await ciCommand(["run", "--ref", "main", "--field", "URL=a=b"], ctx);
-    expect(glApiMock.mock.calls[0][1].rawFields).toContain(
-      "variables[][value]=a=b",
-    );
+    expect(sentPayload(0).variables).toEqual([{ key: "URL", value: "a=b" }]);
   });
 
   it("rejects a --field that is not KEY=value", async () => {
@@ -581,7 +587,7 @@ describe("ci run", () => {
       .mockResolvedValueOnce({ default_branch: "trunk" })
       .mockResolvedValueOnce({ id: 2, ref: "trunk", status: "created" });
     await ciCommand(["run"], ctx);
-    expect(glApiMock.mock.calls[1][1].rawFields).toEqual(["ref=trunk"]);
+    expect(sentPayload(1)).toEqual({ ref: "trunk" });
   });
 });
 

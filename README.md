@@ -163,7 +163,7 @@ The HOST layers on top of that project resolution, in priority order: `--host <h
 
 `mr view`, `mr merge`, `mr checks`, and `mr diff` also accept a full merge request URL in place of the IID (e.g. `glab-axi mr view https://gitlab.example.com/group/project/-/merge_requests/42`); the URL's own host/project target the request, unless an explicit `-R` flag overrides it.
 
-`mr view --reviews` adds approval state (who approved, approvals given/required) and discussion-thread resolution counts. `mr diff` prints a bounded per-file summary (path, status, `+`/`-` line counts) by default; `--full` emits the complete reconstructed unified diff. `mr merge --auto` sets GitLab's merge-when-pipeline-succeeds: it merges immediately if there is no pipeline (or it already passed), otherwise it defers and reports the scheduled state instead of a merge commit SHA; it cannot combine with `--rebase`. When GitLab refuses a merge, the error names the specific cause (conflicts, a draft MR, unresolved discussions, missing approvals, a pipeline that hasn't passed, and so on) plus the command that clears it, instead of GitLab's opaque "Branch cannot be merged". `mr list` and `mr view` accept the same `--jq`/`--json` escape hatches as `api` (see below).
+`mr view --reviews` adds approval state (who approved, approvals given/required) and discussion-thread resolution counts. `mr diff` prints a bounded per-file summary (path, status, `+`/`-` line counts) by default; `--full` emits the complete reconstructed unified diff. `mr merge --auto` sets GitLab's merge-when-pipeline-succeeds: it merges immediately if there is no pipeline (or it already passed), otherwise it defers and reports the scheduled state instead of a merge commit SHA; it cannot combine with `--rebase`. `mr merge --sha <commit>` pins the merge to the head commit you verified: if a push moved the source branch since, GitLab refuses it and the command fails with `CONFLICT` instead of merging unverified code (it also cannot combine with `--rebase`, which replaces the head). When GitLab refuses a merge, the error names the specific cause (conflicts, a draft MR, unresolved discussions, missing approvals, a pipeline that hasn't passed, and so on) plus the command that clears it, instead of GitLab's opaque "Branch cannot be merged". `mr list` and `mr view` accept the same `--jq`/`--json` escape hatches as `api` (see below).
 
 ```sh
 # explicit host + project
@@ -210,6 +210,14 @@ Anything the dedicated commands do not cover, reach via `api`. The `{project}` p
 glab-axi api projects/{project}/members
 glab-axi api POST projects/{project}/labels --raw-field name=urgent --raw-field color=#d9534f
 glab-axi api projects/{project}/pipelines --paginate
+```
+
+To send an array parameter (`scopes`, `assignee_ids`, `iids`, `labels`, ...), name the key with `[]` and repeat it.
+A GET carries every value in the query string; any other method sends all the parameters as a JSON body in which each `key[]` becomes a real array, and `--field` values keep their inferred types:
+
+```sh
+glab-axi api PUT projects/{project}/issues/7 --field "assignee_ids[]=12" --field "assignee_ids[]=34"
+glab-axi api projects/{project}/issues --field "iids[]=1" --field "iids[]=2"
 ```
 
 By default `api` emits TOON with noisy fields stripped. To pull a single field or feed the response to your own tooling, use `--jq` or `--raw`, which both operate on the raw, unmodified JSON:
