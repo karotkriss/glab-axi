@@ -1238,6 +1238,31 @@ describe("mr merge failure diagnosis (AXI clause 6 + 9)", () => {
     expect(err.suggestions.join("\n")).toContain("merge rights");
   });
 
+  it("does not read a 401 inside a /user 500 body as an auth failure", async () => {
+    glApiMock.mockResolvedValueOnce({
+      iid: 1,
+      state: "opened",
+      source_branch: "feat",
+      target_branch: "main",
+    });
+    glApiMock.mockRejectedValueOnce(
+      new AxiError(
+        "GitLab authentication required for this host",
+        "AUTH_REQUIRED",
+      ),
+    );
+    glApiResultMock.mockResolvedValueOnce({
+      exitCode: 1,
+      stdout: "",
+      stderr: "500 Internal Server Error (HTTP 500) request_id=7f401c2e",
+    });
+    const err = (await mrCommand(["merge", "1"], ctx).catch(
+      (e) => e,
+    )) as AxiError;
+    expect(err.code).toBe("UNKNOWN");
+    expect(err.message).toContain("token could not be reconfirmed");
+  });
+
   it("reports an inconclusive result when /user has no username", async () => {
     glApiMock.mockResolvedValueOnce({
       iid: 1,
