@@ -380,7 +380,7 @@ flags{comment}:
   --body <text> or --body-file <path> (required)
 notes:
   merge diagnoses a refusal (conflicts, draft, unresolved discussions, missing approvals, a pending pipeline, etc.) instead of passing through GitLab's opaque error, and suggests the command that clears it. A merge 401 is reported as FORBIDDEN only when GET /user reconfirms the account; a confirmed /user 401 remains AUTH_REQUIRED, and any other reconfirmation result is reported as inconclusive.
-  merge --sha pins the merge to the head commit you verified (gh's --match-head-commit): if a push moved the source branch since, GitLab refuses the merge and it fails with CONFLICT instead of merging unverified code. It cannot be combined with --rebase, which replaces the head.
+  merge --sha pins the merge to the head commit you verified (gh's --match-head-commit): if a push moved the source branch since, GitLab refuses the merge and it fails with CONFLICT instead of merging unverified code. An already-merged MR is a no-op only when its merged head matches the pin; otherwise it fails with CONFLICT naming both heads. It cannot be combined with --rebase, which replaces the head.
 examples:
   glab-axi mr list --state all --head feature-1 --limit 1
   glab-axi mr view 42 --full
@@ -1009,6 +1009,15 @@ async function mrMerge(args: string[], ctx?: RepoContext): Promise<string> {
   // Idempotent: already merged is a no-op.
   const mr = await glApi<Json>(mrPath(ctx, iid), { ctx });
   if ((mr.state ?? "") === "merged") {
+    if (sha !== undefined && mr.sha !== sha) {
+      throw new AxiError(
+        `Merge request !${iid} is already merged at head ${String(mr.sha ?? "unknown")}, not the pinned ${sha}`,
+        "CONFLICT",
+        [
+          `Run \`glab-axi mr view ${iid} --full${repoFlag({ domain: "mr", action: "merge", repo: ctx })}\` to inspect what was merged`,
+        ],
+      );
+    }
     return renderOutput([
       renderDetail(
         "merge_request",
