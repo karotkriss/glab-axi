@@ -987,9 +987,9 @@ async function mrMerge(args: string[], ctx?: RepoContext): Promise<string> {
       "VALIDATION_ERROR",
     );
   }
-  if (sha !== undefined && !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(sha)) {
+  if (sha !== undefined && !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(sha)) {
     throw new AxiError(
-      "--sha must be the full head commit SHA (40 or 64 hex characters) the merge is pinned to",
+      "--sha must be the full head commit SHA (40 or 64 lowercase hex characters) the merge is pinned to",
       "VALIDATION_ERROR",
       [
         `Run \`glab-axi mr view ${iid} --full${repoFlag({ domain: "mr", action: "merge", repo: ctx })}\` to read the head sha`,
