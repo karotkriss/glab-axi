@@ -317,6 +317,28 @@ describe("mr merge", () => {
     expect(glApiMock.mock.calls.length).toBe(1);
   });
 
+  it("--sha keeps the already-merged no-op when the merged head is the pin", async () => {
+    const head = "a".repeat(40);
+    glApiMock.mockResolvedValueOnce(mr({ state: "merged", sha: head }));
+    const out = await mrCommand(["merge", "42", "--sha", head], ctx);
+    expect(out).toContain("already: true");
+    expect(glApiMock.mock.calls.length).toBe(1);
+  });
+
+  it("--sha fails with CONFLICT when the MR was merged at a different head", async () => {
+    const pinned = "a".repeat(40);
+    const merged = "b".repeat(40);
+    glApiMock.mockResolvedValueOnce(mr({ state: "merged", sha: merged }));
+    const err = (await mrCommand(["merge", "42", "--sha", pinned], ctx).catch(
+      (e: unknown) => e,
+    )) as AxiError;
+    expect(err.code).toBe("CONFLICT");
+    expect(exitCodeForError(err)).not.toBe(0);
+    expect(err.message).toContain(pinned);
+    expect(err.message).toContain(merged);
+    expect(glApiMock.mock.calls.length).toBe(1);
+  });
+
   it("squash sets squash=true on the merge call", async () => {
     glApiMock.mockResolvedValueOnce(mr()); // state check
     glApiMock.mockResolvedValueOnce(mr({ state: "merged" })); // merge
