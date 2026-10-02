@@ -860,7 +860,7 @@ async function diagnoseMergeAuthFailure(
     return inconclusive();
   }
   if (who.exitCode !== 0) {
-    if (/401|unauthorized/i.test(errorBody(who))) {
+    if (/HTTP 401|unauthorized/i.test(errorBody(who))) {
       return new AxiError(
         "GitLab authentication required for this host",
         "AUTH_REQUIRED",
