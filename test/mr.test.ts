@@ -382,6 +382,13 @@ describe("mr merge", () => {
     expect(glApiMock).not.toHaveBeenCalled();
   });
 
+  it("rejects an uppercase --sha, since GitLab compares the head case-sensitively", async () => {
+    await expect(
+      mrCommand(["merge", "42", "--sha", "A".repeat(40)], ctx),
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(glApiMock).not.toHaveBeenCalled();
+  });
+
   it("refuses --sha with --rebase, since the rebase replaces the head", async () => {
     await expect(
       mrCommand(["merge", "42", "--rebase", "--sha", "a".repeat(40)], ctx),
