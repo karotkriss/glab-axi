@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-02
+
 ### Added
 
 - New `snippet` command for multi-file personal snippets: `snippet list`, `snippet view <id>` (with `--file <name>` to print one file's raw content), `snippet create`, `snippet edit <id>` (`--file name=@path|name=@-|name=text` to create or update files, `--delete-file <name>` to remove one, plus `--title`/`--description`/`--visibility`), and `snippet delete <id>`. Multi-file create and edit send GitLab's `files[]` change set as a real JSON request body, which `-f`/`-F` form fields cannot express - a re-sync of several files is one atomic edit. It is host-scoped (addressed by the snippet's global id via `-R`/`--host`/remote), not project-scoped.
@@ -163,7 +165,8 @@ First published release.
 - Installable Agent Skill generated from the CLI's own help, with a CI freshness check.
 - Generic host/project targeting via `-R [host/]group/project`, the `origin` git remote, or `GITLAB_HOST` (host-only override).
 
-[Unreleased]: https://github.com/karotkriss/glab-axi/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/karotkriss/glab-axi/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/karotkriss/glab-axi/releases/tag/v0.7.0
 [0.6.0]: https://github.com/karotkriss/glab-axi/releases/tag/v0.6.0
 [0.5.0]: https://github.com/karotkriss/glab-axi/releases/tag/v0.5.0
 [0.4.0]: https://github.com/karotkriss/glab-axi/releases/tag/v0.4.0
