@@ -20,6 +20,21 @@ describe("mapGlError", () => {
     expect(err.message).toBe("key has already been taken");
   });
 
+  it("does not read a 401 inside an id as an auth failure", () => {
+    const err = mapGlError(
+      '409 Conflict (HTTP 409)\n{"message":"SHA does not match HEAD of source branch: 0401abc"}',
+      1,
+    );
+    expect(err.code).toBe("CONFLICT");
+  });
+
+  it("maps an HTTP 401 to AUTH_REQUIRED", () => {
+    expect(mapGlError("401 Unauthorized (HTTP 401)", 1).code).toBe(
+      "AUTH_REQUIRED",
+    );
+    expect(mapGlError("HTTP 401", 1).code).toBe("AUTH_REQUIRED");
+  });
+
   it("falls back to UNKNOWN for an unrecognized error", () => {
     const err = mapGlError("something went wrong", 1);
     expect(err.code).toBe("UNKNOWN");

@@ -23,7 +23,8 @@ interface ErrorPattern {
 
 const patterns: ErrorPattern[] = [
   {
-    pattern: /401|unauthorized|authentication|missing token|not logged in/i,
+    pattern:
+      /HTTP 401|unauthorized|authentication|missing token|not logged in/i,
     code: "AUTH_REQUIRED",
     message: () => "GitLab authentication required for this host",
     suggestions: () => [

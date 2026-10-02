@@ -357,6 +357,24 @@ describe("mr merge", () => {
     expect(err.suggestions.join("\n")).toContain("glab-axi mr checks 42");
   });
 
+  it("--sha reports a moved head as CONFLICT even when the new head contains 401", async () => {
+    const pinned = "a".repeat(40);
+    const moved = "b401".padEnd(40, "c");
+    glApiMock.mockResolvedValueOnce(mr());
+    glApiMock.mockRejectedValueOnce(
+      mapGlError(
+        `PUT .../merge: 409 Conflict (HTTP 409)\n{"message":"SHA does not match HEAD of source branch: ${moved}"}`,
+        1,
+      ),
+    );
+    const err = (await mrCommand(["merge", "42", "--sha", pinned], ctx).catch(
+      (e: unknown) => e,
+    )) as AxiError;
+    expect(err.code).toBe("CONFLICT");
+    expect(err.message).toContain(`not the pinned ${pinned}`);
+    expect(err.message).toContain(moved);
+  });
+
   it("rejects a --sha that is not a full commit SHA before any request", async () => {
     await expect(
       mrCommand(["merge", "42", "--sha", "abc1234"], ctx),
