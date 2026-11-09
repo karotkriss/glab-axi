@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `api --input <file|->` sends a JSON request body from a file or from stdin. This process reads the body and passes it on stdin, not on the command line. A missing file, empty stdin, invalid JSON, a repeated `--input`, or `--field`/`--raw-field` with `--input` is an error.
+
+### Fixed
+
+- `api` sends a bracket name such as `position[base_sha]` as a nested JSON object on POST, PUT, and PATCH. Previously the name was one literal key. GitLab ignored that key, so a draft note was created with a null diff position and the command still succeeded. `--raw-field` values stay strings. `--field` still infers numbers, booleans, and null. A `--field` value that starts with `{` or `[` is JSON. GET and HEAD keep a bracket name as a query parameter.
+
 ## [0.7.0] - 2026-10-02
 
 ### Added

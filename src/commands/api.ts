@@ -6,6 +6,7 @@ import type { RepoContext } from "../context.js";
 import { getAllFlags, getFlag, hasFlag } from "../args.js";
 import { applyJq } from "../machine.js";
 import { cleanBody } from "../body.js";
+import { readStdin } from "../stdin.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -14,7 +15,13 @@ import { cleanBody } from "../body.js";
 const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"];
 
 /** Flags that consume a following value token (when not in --flag=value form). */
-const VALUE_FLAGS = new Set(["--field", "--raw-field", "--header", "--jq"]);
+const VALUE_FLAGS = new Set([
+  "--field",
+  "--raw-field",
+  "--header",
+  "--jq",
+  "--input",
+]);
 
 /**
  * Derive the positional args (method/path), skipping flags and the value tokens
@@ -68,8 +75,9 @@ path:
   Use the {project} placeholder for the current project; it is replaced with the
   URL-encoded project id, e.g. projects/{project}/members → projects/group%2Fproject/members
 flags:
-  --field <k=v>      typed parameter (numbers/bools/null inferred), repeatable
-  --raw-field <k=v>  raw string parameter, repeatable
+  --field <k=v>      typed parameter (numbers/bools/null inferred; { or [ is JSON), repeatable
+  --raw-field <k=v>  raw string parameter, never parsed as JSON, repeatable
+  --input <file|->   JSON request body from a file, or - for stdin
   --header <k:v>     extra HTTP header, repeatable
   --paginate         follow pagination and aggregate all pages
   --jq <expr>        extract a value from the raw JSON via jq (-r); takes precedence over --raw
@@ -79,12 +87,19 @@ arrays:
   assignee_ids, iids or labels. A GET sends key[]= in the query string; any
   other method sends all parameters as a JSON body with each key[] collected
   into a real array (--field values keep their inferred types).
+nested:
+  A bracket name (position[base_sha]) is a nested JSON object on every method
+  except GET and HEAD, which keep it as a query parameter. --field
+  position[new_line]=85 sends a number; the same --raw-field sends the string
+  "85". --field position={...} sends that JSON object. --raw-field does not
+  parse JSON. --input cannot be combined with --field or --raw-field.
 examples:
   glab-axi api projects/{project}/members
   glab-axi api GET projects/{project}/merge_requests --field state=opened
   glab-axi api POST projects/{project}/issues --raw-field title="Bug" --raw-field description="Details"
   glab-axi api PUT projects/{project}/issues/7 --field "assignee_ids[]=12" --field "assignee_ids[]=34"
   glab-axi api projects/{project}/issues --field "iids[]=1" --field "iids[]=2"
+  glab-axi api POST projects/{project}/merge_requests/5/draft_notes --input note.json
   glab-axi api projects/{project}/merge_requests/5 --jq .state
   glab-axi api projects/{project} --raw`;
 
@@ -163,13 +178,160 @@ function typedValue(value: string): unknown {
 }
 
 /**
- * Encode the parameters ourselves when any names an array (`key[]=value`).
- * The wrapped CLI sends fields as a flat map keyed by the literal name: a POST
- * body carries `{"scopes[]": "api"}`, which GitLab reads as `scopes` missing,
- * and a repeated key keeps only its last value. GET/HEAD get a query string
- * with every `key[]=` repeated; any other method gets a JSON body in which each
- * `key[]` collects into a real array. Returns undefined when no field is an
- * array, leaving the plain path unchanged.
+ * A --field value that starts with { or [ is JSON. --raw-field never calls
+ * this: its text stays a literal string, even when it looks like JSON.
+ */
+function jsonFieldValue(raw: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw new AxiError(
+      `--field value is not valid JSON: ${raw.slice(0, 80)}`,
+      "VALIDATION_ERROR",
+    );
+  }
+}
+
+function paramValue(key: string, raw: string, typed: boolean): unknown {
+  if (
+    typed &&
+    !key.includes("[") &&
+    (raw.startsWith("{") || raw.startsWith("["))
+  ) {
+    return jsonFieldValue(raw);
+  }
+  return typed ? typedValue(raw) : raw;
+}
+
+interface KeySegment {
+  name: string;
+  array: boolean;
+}
+
+function invalidParam(key: string): never {
+  throw new AxiError(`invalid parameter name: ${key}`, "VALIDATION_ERROR", [
+    "Use key, key[] or key[child], or send the body with --input <file>",
+  ]);
+}
+
+/** Split `scopes[]` or `position[base_sha]` into segments. A plain key is one. */
+function parseKey(key: string): KeySegment[] {
+  if (!key.includes("[")) return [{ name: key, array: false }];
+  const segments: KeySegment[] = [];
+  let i = 0;
+  while (i < key.length) {
+    if (key[i] === "[") {
+      if (segments.length === 0) invalidParam(key);
+      const end = key.indexOf("]", i);
+      if (end === -1) invalidParam(key);
+      const inner = key.slice(i + 1, end);
+      if (inner === "") {
+        if (segments[segments.length - 1].array) invalidParam(key);
+        segments[segments.length - 1].array = true;
+      } else if (inner.includes("[")) {
+        invalidParam(key);
+      } else {
+        segments.push({ name: inner, array: false });
+      }
+      i = end + 1;
+      continue;
+    }
+    const next = key.indexOf("[", i);
+    const name = next === -1 ? key.slice(i) : key.slice(i, next);
+    if (!name || segments.length > 0) invalidParam(key);
+    segments.push({ name, array: false });
+    i = next === -1 ? key.length : next;
+  }
+  if (segments.length === 0) invalidParam(key);
+  return segments;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function paramConflict(name: string): never {
+  throw new AxiError(
+    `parameter ${name} is both a value and a nested field`,
+    "VALIDATION_ERROR",
+    [
+      "Send one JSON object with --field key={...}, or send the body with --input <file>",
+    ],
+  );
+}
+
+function assignParam(
+  root: Record<string, unknown>,
+  key: string,
+  value: unknown,
+): void {
+  const segments = parseKey(key);
+  let container = root;
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
+    const last = i === segments.length - 1;
+    const existing = container[seg.name];
+    if (!last && seg.array) {
+      // shortcut: array-of-object names (variables[][key]) are rejected, use --input for that shape.
+      throw new AxiError(
+        `parameter ${key} nests inside an array; send that body with --input <file>`,
+        "VALIDATION_ERROR",
+      );
+    }
+    if (last && seg.array) {
+      if (existing === undefined) {
+        container[seg.name] = [value];
+        return;
+      }
+      if (!Array.isArray(existing)) paramConflict(seg.name);
+      existing.push(value);
+      return;
+    }
+    if (last) {
+      if (isRecord(existing) || Array.isArray(existing))
+        paramConflict(seg.name);
+      container[seg.name] = value;
+      return;
+    }
+    if (existing === undefined) {
+      const next: Record<string, unknown> = Object.create(null);
+      container[seg.name] = next;
+      container = next;
+      continue;
+    }
+    if (!isRecord(existing)) paramConflict(seg.name);
+    container = existing;
+  }
+}
+
+function isQueryMethod(method: string): boolean {
+  return method === "GET" || method === "HEAD";
+}
+
+function needsStructuredEncode(
+  method: string,
+  params: ReadonlyArray<readonly [string, string, boolean]>,
+): boolean {
+  if (isQueryMethod(method)) {
+    return params.some(([key]) => ARRAY_KEY.test(key));
+  }
+  return params.some(
+    ([key, raw, typed]) =>
+      key.includes("[") ||
+      (typed &&
+        !key.includes("[") &&
+        (raw.startsWith("{") || raw.startsWith("["))),
+  );
+}
+
+/**
+ * Encode parameters ourselves when a flat map would drop what the caller asked
+ * for. The wrapped CLI keys a JSON body by the literal name, so `scopes[]` and
+ * `position[base_sha]` never become an array or a nested object, and GitLab
+ * ignores them while the request still succeeds. GET/HEAD keep `key[]` in the
+ * query string. Any other method gets one JSON body. A --raw-field value is
+ * always a string; a --field value keeps type inference, and `{` / `[` is JSON.
+ * Returns undefined when the plain field path is still correct.
  */
 export function encodeArrayParams(
   method: string,
@@ -181,9 +343,9 @@ export function encodeArrayParams(
     ...fields.map((f) => [...splitParam("--field", f), true] as const),
     ...rawFields.map((f) => [...splitParam("--raw-field", f), false] as const),
   ];
-  if (!params.some(([key]) => ARRAY_KEY.test(key))) return undefined;
+  if (!needsStructuredEncode(method, params)) return undefined;
 
-  if (method === "GET" || method === "HEAD") {
+  if (isQueryMethod(method)) {
     const query = new URLSearchParams(
       params.map(([key, value]): [string, string] => [key, value]),
     ).toString();
@@ -192,14 +354,7 @@ export function encodeArrayParams(
 
   const body: Record<string, unknown> = Object.create(null);
   for (const [key, raw, typed] of params) {
-    const value = typed ? typedValue(raw) : raw;
-    const array = ARRAY_KEY.exec(key);
-    if (!array) {
-      body[key] = value;
-      continue;
-    }
-    const existing = body[array[1]];
-    body[array[1]] = Array.isArray(existing) ? [...existing, value] : [value];
+    assignParam(body, key, paramValue(key, raw, typed));
   }
   return { path, json: JSON.stringify(body) };
 }
@@ -230,6 +385,84 @@ function parseMethodAndPath(positionals: string[]): {
     );
   }
   return { method: "GET", path: positionals[0] };
+}
+
+const INPUT_HINT = [
+  "Pass --input <file>, or --input - to read the JSON body from stdin",
+];
+
+/** One --input source, or undefined when the flag is absent. */
+function inputSource(args: string[]): string | undefined {
+  const present = args.some((a) => a === "--input" || a.startsWith("--input="));
+  if (!present) return undefined;
+  const values = getAllFlags(args, "--input");
+  if (values.length > 1) {
+    throw new AxiError(
+      "--input was given more than once",
+      "VALIDATION_ERROR",
+      INPUT_HINT,
+    );
+  }
+  if (values.length === 0 || values[0] === "") {
+    throw new AxiError(
+      "--input requires a file path or -",
+      "VALIDATION_ERROR",
+      INPUT_HINT,
+    );
+  }
+  return values[0];
+}
+
+function readInputFile(path: string): string {
+  try {
+    return readFileSync(path, "utf8");
+  } catch (err) {
+    const code =
+      err && typeof err === "object" && "code" in err
+        ? String((err as { code: unknown }).code)
+        : "UNKNOWN";
+    if (code === "ENOENT") {
+      throw new AxiError(
+        `JSON body file not found: ${path}`,
+        "VALIDATION_ERROR",
+        INPUT_HINT,
+      );
+    }
+    throw new AxiError(
+      `Could not read JSON body file: ${path} (${code})`,
+      "VALIDATION_ERROR",
+    );
+  }
+}
+
+/**
+ * Read the --input body in this process, then hand the bytes to the child on
+ * stdin. Validating here keeps a bad body off the wire, and keeps the JSON
+ * off the child's argv.
+ */
+function readJsonInput(source: string): string {
+  const text =
+    source === "-"
+      ? readStdin({
+          rejectBinaryMessage: "JSON body on stdin is not valid UTF-8",
+          suggestions: INPUT_HINT,
+        })
+      : readInputFile(source);
+  if (text.trim() === "") {
+    throw new AxiError(
+      source === "-"
+        ? "No JSON body was piped on stdin"
+        : `JSON body file is empty: ${source}`,
+      "VALIDATION_ERROR",
+      INPUT_HINT,
+    );
+  }
+  try {
+    JSON.parse(text);
+  } catch {
+    throw new AxiError("JSON body is not valid JSON", "VALIDATION_ERROR");
+  }
+  return text;
 }
 
 export async function apiCommand(
@@ -265,20 +498,46 @@ export async function apiCommand(
   const { method, path: rawPath } = parseMethodAndPath(positionals);
   const path = rawPath.replace(/\{project\}/g, projectId(ctx));
 
-  const arrays = encodeArrayParams(method, path, fields, rawFields);
+  const input = inputSource(args);
+  if (input !== undefined && (fields.length > 0 || rawFields.length > 0)) {
+    throw new AxiError(
+      "--input cannot be combined with --field or --raw-field",
+      "VALIDATION_ERROR",
+      ["Put every parameter in the JSON body, or omit --input and pass fields"],
+    );
+  }
+
+  const arrays =
+    input === undefined
+      ? encodeArrayParams(method, path, fields, rawFields)
+      : undefined;
   const result = await glApiResult(
     arrays?.path ?? path,
-    arrays
+    input !== undefined
       ? {
           method,
           headers,
           paginate,
           ctx,
-          ...(arrays.json !== undefined && {
-            body: { content: arrays.json, contentType: "application/json" },
-          }),
+          body: {
+            content: readJsonInput(input),
+            contentType: "application/json",
+          },
         }
-      : { method, fields, rawFields, headers, paginate, ctx },
+      : arrays
+        ? {
+            method,
+            headers,
+            paginate,
+            ctx,
+            ...(arrays.json !== undefined && {
+              body: {
+                content: arrays.json,
+                contentType: "application/json",
+              },
+            }),
+          }
+        : { method, fields, rawFields, headers, paginate, ctx },
   );
 
   if (result.exitCode !== 0) {

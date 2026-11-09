@@ -220,6 +220,12 @@ glab-axi api PUT projects/{project}/issues/7 --field "assignee_ids[]=12" --field
 glab-axi api projects/{project}/issues --field "iids[]=1" --field "iids[]=2"
 ```
 
+A name with brackets, such as `position[base_sha]`, is sent as a nested JSON object on every method except GET and HEAD (those keep the name in the query string). `--raw-field` values stay strings. `--field` infers numbers, booleans, and null, and a value that starts with `{` or `[` is parsed as JSON. A complete JSON body goes through `--input <file>`, or `--input -` to read stdin. Do not combine `--input` with `--field` or `--raw-field`.
+
+```sh
+glab-axi api POST projects/{project}/merge_requests/5/draft_notes --input note.json
+```
+
 By default `api` emits TOON with noisy fields stripped. To pull a single field or feed the response to your own tooling, use `--jq` or `--raw`, which both operate on the raw, unmodified JSON:
 
 ```sh
