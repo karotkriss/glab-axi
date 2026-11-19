@@ -177,6 +177,15 @@ function typedValue(value: string): unknown {
   return value;
 }
 
+/** True when a --field value must be parsed as JSON. Same rule for every name. */
+function isJsonField(raw: string, typed: boolean): boolean {
+  return typed && (raw.startsWith("{") || raw.startsWith("["));
+}
+
+function jsonErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : "invalid JSON";
+}
+
 /**
  * A --field value that starts with { or [ is JSON. --raw-field never calls
  * this: its text stays a literal string, even when it looks like JSON.
@@ -184,22 +193,17 @@ function typedValue(value: string): unknown {
 function jsonFieldValue(raw: string): unknown {
   try {
     return JSON.parse(raw);
-  } catch {
+  } catch (err) {
     throw new AxiError(
-      `--field value is not valid JSON: ${raw.slice(0, 80)}`,
+      `--field value is not valid JSON: ${jsonErrorMessage(err)}`,
       "VALIDATION_ERROR",
+      ["Use --raw-field to send the text as a literal string"],
     );
   }
 }
 
-function paramValue(key: string, raw: string, typed: boolean): unknown {
-  if (
-    typed &&
-    !key.includes("[") &&
-    (raw.startsWith("{") || raw.startsWith("["))
-  ) {
-    return jsonFieldValue(raw);
-  }
+function paramValue(raw: string, typed: boolean): unknown {
+  if (isJsonField(raw, typed)) return jsonFieldValue(raw);
   return typed ? typedValue(raw) : raw;
 }
 
@@ -316,11 +320,7 @@ function needsStructuredEncode(
     return params.some(([key]) => ARRAY_KEY.test(key));
   }
   return params.some(
-    ([key, raw, typed]) =>
-      key.includes("[") ||
-      (typed &&
-        !key.includes("[") &&
-        (raw.startsWith("{") || raw.startsWith("["))),
+    ([key, raw, typed]) => key.includes("[") || isJsonField(raw, typed),
   );
 }
 
@@ -330,8 +330,10 @@ function needsStructuredEncode(
  * `position[base_sha]` never become an array or a nested object, and GitLab
  * ignores them while the request still succeeds. GET/HEAD keep `key[]` in the
  * query string. Any other method gets one JSON body. A --raw-field value is
- * always a string; a --field value keeps type inference, and `{` / `[` is JSON.
- * Returns undefined when the plain field path is still correct.
+ * always a string; a --field value keeps type inference, and `{` / `[` is JSON
+ * for every name. Returns undefined when the plain field path is still correct.
+ * `graphql` stays on that path: the wrapped CLI nests variables, and a body
+ * built here would put them at the top level.
  */
 export function encodeArrayParams(
   method: string,
@@ -343,7 +345,9 @@ export function encodeArrayParams(
     ...fields.map((f) => [...splitParam("--field", f), true] as const),
     ...rawFields.map((f) => [...splitParam("--raw-field", f), false] as const),
   ];
-  if (!needsStructuredEncode(method, params)) return undefined;
+  if (path === "graphql" || !needsStructuredEncode(method, params)) {
+    return undefined;
+  }
 
   if (isQueryMethod(method)) {
     const query = new URLSearchParams(
@@ -354,7 +358,7 @@ export function encodeArrayParams(
 
   const body: Record<string, unknown> = Object.create(null);
   for (const [key, raw, typed] of params) {
-    assignParam(body, key, paramValue(key, raw, typed));
+    assignParam(body, key, paramValue(raw, typed));
   }
   return { path, json: JSON.stringify(body) };
 }
@@ -414,8 +418,9 @@ function inputSource(args: string[]): string | undefined {
 }
 
 function readInputFile(path: string): string {
+  let raw: Buffer;
   try {
-    return readFileSync(path, "utf8");
+    raw = readFileSync(path);
   } catch (err) {
     const code =
       err && typeof err === "object" && "code" in err
@@ -433,6 +438,29 @@ function readInputFile(path: string): string {
       "VALIDATION_ERROR",
     );
   }
+  // TextDecoder strips a leading BOM, so detect it on the bytes or the file
+  // is accepted with no hint.
+  if (
+    raw.length >= 3 &&
+    raw[0] === 0xef &&
+    raw[1] === 0xbb &&
+    raw[2] === 0xbf
+  ) {
+    throw new AxiError(
+      "JSON body starts with a UTF-8 BOM",
+      "VALIDATION_ERROR",
+      ["Remove the byte order mark from the JSON body, then retry"],
+    );
+  }
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(raw);
+  } catch {
+    throw new AxiError(
+      `JSON body file is not valid UTF-8: ${path}`,
+      "VALIDATION_ERROR",
+      INPUT_HINT,
+    );
+  }
 }
 
 /**
@@ -448,6 +476,13 @@ function readJsonInput(source: string): string {
           suggestions: INPUT_HINT,
         })
       : readInputFile(source);
+  if (text.charCodeAt(0) === 0xfeff) {
+    throw new AxiError(
+      "JSON body starts with a UTF-8 BOM",
+      "VALIDATION_ERROR",
+      ["Remove the byte order mark from the JSON body, then retry"],
+    );
+  }
   if (text.trim() === "") {
     throw new AxiError(
       source === "-"
@@ -459,10 +494,43 @@ function readJsonInput(source: string): string {
   }
   try {
     JSON.parse(text);
-  } catch {
-    throw new AxiError("JSON body is not valid JSON", "VALIDATION_ERROR");
+  } catch (err) {
+    throw new AxiError(
+      `JSON body is not valid JSON: ${jsonErrorMessage(err)}`,
+      "VALIDATION_ERROR",
+      INPUT_HINT,
+    );
   }
   return text;
+}
+
+/**
+ * buildApiArgs always adds the body Content-Type. A caller header must replace
+ * that default, not ride along, or the request sends two.
+ */
+function requestBody(
+  content: string,
+  headers: string[],
+): {
+  headers: string[];
+  body: { content: string; contentType: string };
+} {
+  const kept: string[] = [];
+  let contentType: string | undefined;
+  for (const header of headers) {
+    const sep = header.indexOf(":");
+    const name = sep === -1 ? "" : header.slice(0, sep).trim().toLowerCase();
+    if (name === "content-type") {
+      const value = header.slice(sep + 1).trim();
+      if (value) contentType = value;
+      continue;
+    }
+    kept.push(header);
+  }
+  return {
+    headers: kept,
+    body: { content, contentType: contentType ?? "application/json" },
+  };
 }
 
 export async function apiCommand(
@@ -511,32 +579,13 @@ export async function apiCommand(
     input === undefined
       ? encodeArrayParams(method, path, fields, rawFields)
       : undefined;
+  const json = input !== undefined ? readJsonInput(input) : arrays?.json;
   const result = await glApiResult(
     arrays?.path ?? path,
-    input !== undefined
-      ? {
-          method,
-          headers,
-          paginate,
-          ctx,
-          body: {
-            content: readJsonInput(input),
-            contentType: "application/json",
-          },
-        }
+    json !== undefined
+      ? { method, paginate, ctx, ...requestBody(json, headers) }
       : arrays
-        ? {
-            method,
-            headers,
-            paginate,
-            ctx,
-            ...(arrays.json !== undefined && {
-              body: {
-                content: arrays.json,
-                contentType: "application/json",
-              },
-            }),
-          }
+        ? { method, headers, paginate, ctx }
         : { method, fields, rawFields, headers, paginate, ctx },
   );
 

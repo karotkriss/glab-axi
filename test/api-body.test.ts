@@ -228,13 +228,64 @@ describe("api --input", () => {
     expect(readStdinMock).toHaveBeenCalledTimes(1);
   });
 
-  it("rejects malformed JSON before any request", async () => {
+  it("rejects malformed JSON before any request and names the position", async () => {
     const file = join(dir, "bad.json");
     writeFileSync(file, "{");
     await expect(
       apiCommand(["POST", "x", "--input", file], ctx),
-    ).rejects.toThrow("JSON body is not valid JSON");
+    ).rejects.toMatchObject({
+      message: expect.stringMatching(/JSON body is not valid JSON: .*position/),
+      suggestions: expect.arrayContaining([expect.stringContaining("--input")]),
+    });
     expect(glApiResultMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects an invalid UTF-8 file and a UTF-8 BOM with a hint", async () => {
+    const binary = join(dir, "binary.json");
+    writeFileSync(binary, Buffer.from([0xff, 0xfe, 0x7b]));
+    await expect(
+      apiCommand(["POST", "x", "--input", binary], ctx),
+    ).rejects.toMatchObject({
+      message: expect.stringContaining("not valid UTF-8"),
+      suggestions: expect.arrayContaining([expect.stringContaining("--input")]),
+    });
+
+    const bom = join(dir, "bom.json");
+    writeFileSync(
+      bom,
+      Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('{"a":1}')]),
+    );
+    await expect(
+      apiCommand(["POST", "x", "--input", bom], ctx),
+    ).rejects.toMatchObject({
+      message: "JSON body starts with a UTF-8 BOM",
+      suggestions: expect.arrayContaining([
+        expect.stringContaining("byte order mark"),
+      ]),
+    });
+    expect(glApiResultMock).not.toHaveBeenCalled();
+  });
+
+  it("sends the caller Content-Type once and keeps other headers", async () => {
+    const file = join(dir, "note.json");
+    writeFileSync(file, '{"a":1}\n');
+    glApiResultMock.mockResolvedValueOnce(ok({}));
+    await apiCommand(
+      [
+        "POST",
+        "x",
+        "--input",
+        file,
+        "--header",
+        "Content-Type: application/merge-patch+json",
+        "--header",
+        "X-Trace: 1",
+      ],
+      ctx,
+    );
+    const [, opts] = glApiResultMock.mock.calls[0];
+    expect(opts.body.contentType).toBe("application/merge-patch+json");
+    expect(opts.headers).toEqual(["X-Trace: 1"]);
   });
 
   it("rejects a repeated --input and --input combined with a field", async () => {
@@ -254,10 +305,138 @@ describe("api --input", () => {
     expect(readStdinMock).not.toHaveBeenCalled();
   });
 
+  it("rejects a UTF-8 BOM on stdin with a hint", async () => {
+    readStdinMock.mockReturnValue('\uFEFF{"a":1}');
+    await expect(
+      apiCommand(["POST", "x", "--input", "-"], ctx),
+    ).rejects.toThrow("JSON body starts with a UTF-8 BOM");
+    expect(glApiResultMock).not.toHaveBeenCalled();
+  });
+
   it("rejects an empty stdin body", async () => {
     await expect(
       apiCommand(["POST", "x", "--input", "-"], ctx),
     ).rejects.toThrow("No JSON body was piped on stdin");
     expect(glApiResultMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("api review regressions", () => {
+  it("keeps a multi-line draft-note line_range", async () => {
+    glApiResultMock.mockResolvedValueOnce(ok({ id: 1 }));
+    const startCode = "abc_10_10";
+    const endCode = "abc_10_14";
+    await apiCommand(
+      [
+        "POST",
+        "projects/{project}/merge_requests/5/draft_notes",
+        "--raw-field",
+        "note=review",
+        "--raw-field",
+        "position[position_type]=text",
+        "--raw-field",
+        `position[base_sha]=${BASE_SHA}`,
+        "--raw-field",
+        `position[start_sha]=${START_SHA}`,
+        "--raw-field",
+        `position[head_sha]=${HEAD_SHA}`,
+        "--raw-field",
+        `position[old_path]=${OLD_PATH}`,
+        "--raw-field",
+        `position[new_path]=${NEW_PATH}`,
+        "--field",
+        "position[new_line]=14",
+        "--raw-field",
+        `position[line_range][start][line_code]=${startCode}`,
+        "--raw-field",
+        "position[line_range][start][type]=new",
+        "--field",
+        "position[line_range][start][new_line]=10",
+        "--raw-field",
+        `position[line_range][end][line_code]=${endCode}`,
+        "--raw-field",
+        "position[line_range][end][type]=new",
+        "--field",
+        "position[line_range][end][new_line]=14",
+      ],
+      ctx,
+    );
+    expect(sentBody().parsed.position.line_range).toEqual({
+      start: { line_code: startCode, type: "new", new_line: 10 },
+      end: { line_code: endCode, type: "new", new_line: 14 },
+    });
+    expect(sentBody().parsed.position.new_line).toBe(14);
+  });
+
+  it("parses a JSON object under a bracket name", async () => {
+    glApiResultMock.mockResolvedValueOnce(ok({ id: 1 }));
+    await apiCommand(
+      [
+        "POST",
+        "x",
+        "--field",
+        'position[line_range]={"start":{"line_code":"abc_10_10"}}',
+      ],
+      ctx,
+    );
+    expect(sentBody().parsed.position.line_range).toEqual({
+      start: { line_code: "abc_10_10" },
+    });
+  });
+
+  it("rejects a name that is both a scalar and a nested field", async () => {
+    await expect(
+      apiCommand(
+        [
+          "POST",
+          "x",
+          "--raw-field",
+          "position=text",
+          "--raw-field",
+          `position[base_sha]=${BASE_SHA}`,
+        ],
+        ctx,
+      ),
+    ).rejects.toThrow("parameter position is both a value and a nested field");
+    expect(glApiResultMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses actions[][action] and points at --input", async () => {
+    await expect(
+      apiCommand(["POST", "x", "--raw-field", "actions[][action]=update"], ctx),
+    ).rejects.toThrow("nests inside an array");
+    expect(glApiResultMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects an invalid --field JSON value and names --raw-field", async () => {
+    await expect(
+      apiCommand(["POST", "x", "--field", "labels=[bug]"], ctx),
+    ).rejects.toMatchObject({
+      message: expect.stringMatching(
+        /--field value is not valid JSON: Unexpected token/,
+      ),
+      suggestions: ["Use --raw-field to send the text as a literal string"],
+    });
+    expect(glApiResultMock).not.toHaveBeenCalled();
+  });
+
+  it("leaves graphql fields for the wrapped CLI to nest under variables", async () => {
+    glApiResultMock.mockResolvedValueOnce(ok({ data: {} }));
+    await apiCommand(
+      [
+        "POST",
+        "graphql",
+        "--raw-field",
+        "query=query { project { id } }",
+        "--field",
+        'input={"projectPath":"group/project"}',
+      ],
+      ctx,
+    );
+    const [path, opts] = glApiResultMock.mock.calls[0];
+    expect(path).toBe("graphql");
+    expect(opts.body).toBeUndefined();
+    expect(opts.fields).toEqual(['input={"projectPath":"group/project"}']);
+    expect(opts.rawFields).toEqual(["query=query { project { id } }"]);
   });
 });
