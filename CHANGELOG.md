@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `api` sends a bracket name such as `position[base_sha]` as a nested JSON object on POST, PUT, and PATCH. Previously the name was one literal key. GitLab ignored that key, so a draft note was created with a null diff position and the command still succeeded. `--raw-field` values stay strings. `--field` still infers numbers, booleans, and null. A `--field` value that starts with `{` or `[` is JSON. GET and HEAD keep a bracket name as a query parameter.
+- `api` sends a bracket name such as `position[base_sha]` as a nested JSON object on POST, PUT, and PATCH. Previously the name was one literal key. GitLab ignored that key, so a draft note was created with a null diff position and the command still succeeded. `--raw-field` values stay strings. `--field` still infers numbers, booleans, and null. A `--field` value that starts with `{` or `[` is JSON. GET and HEAD keep a bracket name as a query parameter. A `--field` value that starts with `[` or `{` but is plain text now fails on POST, PUT, PATCH, and DELETE, and `--raw-field` sends it; this is a behavior change from glab 1.53, where `--field 'labels=[bug]'` became `["bug"]`.
 
 ## [0.7.0] - 2026-10-02
 
