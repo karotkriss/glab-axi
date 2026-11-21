@@ -23,6 +23,7 @@ import { refuseSubcommand } from "../refusals.js";
 import { takeFlag, takeBoolFlag, takeNumber, parseLimit } from "../args.js";
 import { parseFields, type FieldSpec } from "../fields.js";
 import { resolveUserId, resolveMilestoneId } from "../resolve.js";
+import { sleep } from "../sleep.js";
 import {
   field,
   pluck,
@@ -75,10 +76,6 @@ function mrPath(
   suffix = "",
 ): string {
   return `projects/${requireProject(ctx)}/merge_requests/${iid}${suffix}`;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
@@ -380,6 +377,7 @@ flags{comment}:
   --body <text> or --body-file <path> (required)
 notes:
   merge diagnoses a refusal (conflicts, draft, unresolved discussions, missing approvals, a pending pipeline, etc.) instead of passing through GitLab's opaque error, and suggests the command that clears it. A merge 401 is reported as FORBIDDEN only when GET /user reconfirms the account; a confirmed /user 401 remains AUTH_REQUIRED, and any other reconfirmation result is reported as inconclusive.
+  merge --auto gates on a pipeline for the MR's current head commit: when the MR has run pipelines before or the project requires a passing one, it waits up to 30s for a pipeline on that head (a push leaves the old head's pipeline in place until the new one starts) and refuses with TIMEOUT if none appears, then pins the merge to that head and reports gated_pipeline and gated_sha. A project that has never run a pipeline here still merges at once.
   merge --sha pins the merge to the head commit you verified (gh's --match-head-commit): if a push moved the source branch since, GitLab refuses the merge and it fails with CONFLICT instead of merging unverified code. An already-merged MR is a no-op only when its merged head matches the pin; otherwise it fails with CONFLICT naming both heads. It cannot be combined with --rebase, which replaces the head.
 examples:
   glab-axi mr list --state all --head feature-1 --limit 1
@@ -758,6 +756,99 @@ async function waitForRebase(iid: number, ctx?: RepoContext): Promise<Json> {
   );
 }
 
+// How long `mr merge --auto` waits for a pipeline to appear on a fresh head.
+const PIPELINE_GATE_POLL_INTERVAL_MS = 2000;
+const PIPELINE_GATE_POLL_MAX_ATTEMPTS = 15; // ~30s
+
+interface PipelineGate {
+  id: number;
+  sha: string;
+}
+
+/**
+ * The MR's head pipeline, but only when it ran on the MR's CURRENT head.
+ *
+ * `head_pipeline` is not cleared by a push: right after a force-push it still
+ * names the pipeline that ran on the previous head until GitLab creates the new
+ * one. A merged-results or merge-train pipeline runs on a synthetic merge commit
+ * instead of the head itself, so it counts when that commit's parents include
+ * the head.
+ */
+async function headPipelineOf(
+  mr: Json,
+  ctx?: RepoContext,
+): Promise<PipelineGate | undefined> {
+  const head = mr.sha;
+  const p = mr.head_pipeline;
+  if (typeof head !== "string" || typeof p?.id !== "number") return undefined;
+  if (p.sha === head) return { id: p.id, sha: head };
+  if (
+    typeof p.sha === "string" &&
+    /^refs\/merge-requests\/\d+\/(?:merge|train)$/.test(String(p.ref ?? ""))
+  ) {
+    const commit = await glApi<Json>(
+      `projects/${projectId(ctx)}/repository/commits/${p.sha}`,
+      { ctx },
+    );
+    if ((commit.parent_ids ?? []).includes(head))
+      return { id: p.id, sha: head };
+  }
+  return undefined;
+}
+
+/**
+ * Whether this MR's merge should wait for a pipeline: it has run pipelines
+ * before, or the project refuses merges without a passing one. A project that
+ * has never run a pipeline here keeps GitLab's own immediate auto-merge.
+ */
+async function expectsPipeline(
+  mr: Json,
+  iid: number,
+  ctx?: RepoContext,
+): Promise<boolean> {
+  if (mr.head_pipeline) return true;
+  const pipelines = await glApi<Json[]>(
+    `${mrPath(ctx, iid, "/pipelines")}?per_page=1`,
+    { ctx },
+  );
+  if (pipelines.length > 0) return true;
+  const project = await glApi<Json>(`projects/${projectId(ctx)}`, { ctx });
+  return project.only_allow_merge_if_pipeline_succeeds === true;
+}
+
+/**
+ * Find the pipeline `mr merge --auto` is gated on. GitLab's auto-merge treats a
+ * head with no pipeline yet as nothing to wait for and merges it at once, so
+ * after a push the merge would land an untested head. When the MR is expected
+ * to run pipelines, wait briefly for one on the current head and refuse if none
+ * appears. Returns the freshest MR snapshot read along the way.
+ */
+async function awaitHeadPipeline(
+  mr: Json,
+  iid: number,
+  ctx?: RepoContext,
+): Promise<{ mr: Json; gate?: PipelineGate }> {
+  const gate = await headPipelineOf(mr, ctx);
+  if (gate) return { mr, gate };
+  if (!(await expectsPipeline(mr, iid, ctx))) return { mr };
+  let latest = mr;
+  for (let attempt = 0; attempt < PIPELINE_GATE_POLL_MAX_ATTEMPTS; attempt++) {
+    await sleep(PIPELINE_GATE_POLL_INTERVAL_MS);
+    latest = await glApi<Json>(mrPath(ctx, iid), { ctx });
+    const found = await headPipelineOf(latest, ctx);
+    if (found) return { mr: latest, gate: found };
+  }
+  const r = repoFlag({ domain: "mr", action: "merge", repo: ctx });
+  throw new AxiError(
+    `Merge request !${iid} was not set to auto-merge: no pipeline started on its head ${String(latest.sha ?? "unknown")} within ${(PIPELINE_GATE_POLL_INTERVAL_MS * PIPELINE_GATE_POLL_MAX_ATTEMPTS) / 1000}s, and merging now would merge an untested commit`,
+    "TIMEOUT",
+    [
+      `Run \`glab-axi mr checks ${iid}${r}\` to see whether a pipeline has started`,
+      `Re-run \`glab-axi mr merge ${iid} --auto${r}\` with the same flags once it has`,
+    ],
+  );
+}
+
 /**
  * Why GitLab refused a merge, and the command that clears it.
  *
@@ -1046,6 +1137,10 @@ async function mrMerge(args: string[], ctx?: RepoContext): Promise<string> {
 
   // rebase is asynchronous: kick it off, poll to completion, THEN merge.
   let mergeSnapshot = mr;
+  let gate: PipelineGate | undefined;
+  if (auto) {
+    ({ mr: mergeSnapshot, gate } = await awaitHeadPipeline(mr, iid, ctx));
+  }
   if (method === "rebase") {
     await glApi<Json>(mrPath(ctx, iid, "/rebase"), { method: "PUT", ctx });
     mergeSnapshot = await waitForRebase(iid, ctx);
@@ -1055,13 +1150,16 @@ async function mrMerge(args: string[], ctx?: RepoContext): Promise<string> {
   const rawFields: string[] = [];
   if (method === "squash") fields.push("squash=true");
   if (removeSource) fields.push("should_remove_source_branch=true");
-  // Auto-merge: GitLab merges once the head pipeline succeeds. If there is no
-  // pipeline (or it already passed) GitLab merges immediately instead.
+  // Auto-merge: GitLab merges once the head pipeline succeeds. If the head has
+  // no pipeline (or it already passed) GitLab merges immediately instead, which
+  // is why awaitHeadPipeline gates it first.
   if (auto) fields.push("merge_when_pipeline_succeeds=true");
   if (body !== undefined) rawFields.push(`merge_commit_message=${body}`);
   // GitLab refuses the merge (409) unless the source branch head is still this
   // commit, so a push landing after verification cannot be merged unverified.
-  if (sha !== undefined) rawFields.push(`sha=${sha}`);
+  // Auto-merge pins the head its gate pipeline ran on the same way.
+  const pin = sha ?? gate?.sha;
+  if (pin !== undefined) rawFields.push(`sha=${pin}`);
 
   let merged: Json;
   try {
@@ -1075,15 +1173,20 @@ async function mrMerge(args: string[], ctx?: RepoContext): Promise<string> {
     // A moved head is the pin doing its job; report it as such rather than
     // letting mergeBlocker attribute it to whatever state the MR is in.
     if (
-      sha !== undefined &&
+      pin !== undefined &&
       err instanceof AxiError &&
       /SHA does not match HEAD/i.test(err.message)
     ) {
+      const r = repoFlag({ domain: "mr", action: "merge", repo: ctx });
       throw new AxiError(
-        `Merge request !${iid} was not merged: its source branch head is not the pinned ${sha} (${err.message})`,
+        sha !== undefined
+          ? `Merge request !${iid} was not merged: its source branch head is not the pinned ${sha} (${err.message})`
+          : `Merge request !${iid} was not set to auto-merge: its source branch moved past ${pin}, the head pipeline ${gate?.id} ran on (${err.message})`,
         "CONFLICT",
         [
-          `Run \`glab-axi mr checks ${iid}${repoFlag({ domain: "mr", action: "merge", repo: ctx })}\` to verify the new head, then merge again with --sha <new-head>`,
+          sha !== undefined
+            ? `Run \`glab-axi mr checks ${iid}${r}\` to verify the new head, then merge again with --sha <new-head>`
+            : `Re-run \`glab-axi mr merge ${iid} --auto${r}\` to gate on the new head's pipeline`,
         ],
       );
     }
@@ -1092,6 +1195,8 @@ async function mrMerge(args: string[], ctx?: RepoContext): Promise<string> {
   const help = renderHelp(
     getSuggestions({ domain: "mr", action: "merge", id: iid, repo: ctx }),
   );
+  const gated = gate ? { gated_pipeline: gate.id, gated_sha: gate.sha } : {};
+  const gatedFields = gate ? [field("gated_pipeline"), field("gated_sha")] : [];
 
   // Auto-merge that didn't merge immediately: report the scheduled state rather
   // than a (nonexistent) merge commit.
@@ -1105,12 +1210,14 @@ async function mrMerge(args: string[], ctx?: RepoContext): Promise<string> {
           auto_merge: "enabled",
           merge_when_pipeline_succeeds:
             merged.merge_when_pipeline_succeeds === true ? "yes" : "no",
+          ...gated,
         },
         [
           field("iid"),
           field("state"),
           field("auto_merge"),
           field("merge_when_pipeline_succeeds"),
+          ...gatedFields,
         ],
       ),
       help,
@@ -1126,12 +1233,14 @@ async function mrMerge(args: string[], ctx?: RepoContext): Promise<string> {
         method: method ?? "merge",
         merge_commit_sha:
           merged.merge_commit_sha ?? merged.squash_commit_sha ?? null,
+        ...gated,
       },
       [
         field("iid"),
         field("state"),
         field("method"),
         field("merge_commit_sha"),
+        ...gatedFields,
       ],
     ),
     help,
