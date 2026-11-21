@@ -90,3 +90,54 @@ describe("api binary responses", () => {
     );
   });
 });
+
+describe("api binary failures", () => {
+  it("reports an over-cap response as a structured error naming the cap", async () => {
+    execFileMock.mockImplementation(
+      (
+        _cmd: string,
+        _args: string[],
+        _opts: unknown,
+        cb: (e: unknown, out: Buffer, err: Buffer) => void,
+      ) => {
+        cb(
+          Object.assign(new RangeError("stdout maxBuffer length exceeded"), {
+            code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
+          }),
+          ZIP,
+          Buffer.alloc(0),
+        );
+        return { stdin: { on() {}, end() {} } };
+      },
+    );
+    const out = (
+      await run("projects/{project}/jobs/1/artifacts/a.zip", "--raw")
+    ).toString();
+    expect(out).toContain("1024 MB output limit");
+    expect(out).not.toContain("HTTP/1.1");
+    expect(process.exitCode).not.toBe(0);
+  });
+
+  it("never pattern-matches a partial binary body as the error", async () => {
+    respond(
+      "application/zip",
+      Buffer.concat([ZIP, Buffer.from(" file not found ")]),
+      1,
+    );
+    const out = (
+      await run("projects/{project}/jobs/1/artifacts/a.zip", "--raw")
+    ).toString();
+    expect(out).not.toContain("NOT_FOUND");
+    expect(out).not.toContain("HTTP/1.1");
+    expect(out).toContain("Request failed with code 1");
+  });
+
+  it("still maps a JSON error body behind the response headers", async () => {
+    respond("application/json", Buffer.from('{"message":"404 Not Found"}'), 1);
+    const out = (
+      await run("projects/{project}/jobs/1/artifacts/a.zip")
+    ).toString();
+    expect(out).toContain("NOT_FOUND");
+    expect(out).not.toContain("HTTP/1.1");
+  });
+});
