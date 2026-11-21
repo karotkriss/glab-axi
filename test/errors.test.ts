@@ -8,7 +8,10 @@ describe("mapGlError", () => {
       1,
     );
     expect(err.code).toBe("VALIDATION_ERROR");
-    expect(err.message).toContain("structured error body");
+    expect(err.message).toBe(
+      "GitLab rejected the request with a validation error whose details the installed CLI version does not pass through",
+    );
+    expect(err.suggestions.join(" ")).toMatch(/GitLab API documentation/);
     expect(err.message).not.toMatch(/masked/i);
     expect(err.suggestions.join(" ")).not.toMatch(/masked/i);
   });
@@ -19,7 +22,9 @@ describe("mapGlError", () => {
       1,
     );
     expect(err.code).toBe("CONFLICT");
-    expect(err.message).toContain("(HTTP 409)");
+    expect(err.message).toBe(
+      "GitLab rejected the request with HTTP 409 and a validation error whose details the installed CLI version does not pass through",
+    );
   });
 
   it("surfaces GitLab's own message with the status for each error shape", () => {
