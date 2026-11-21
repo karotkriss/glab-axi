@@ -136,10 +136,10 @@ export function mapGlError(stderr: string, exitCode: number): AxiError {
   const tag = httpStatus ? ` (HTTP ${httpStatus})` : "";
   if (UNMARSHAL_QUIRK.test(stderr)) {
     return new AxiError(
-      `GitLab rejected the request${tag} with a structured error body the CLI cannot display`,
+      `GitLab rejected the request${httpStatus ? ` with HTTP ${httpStatus} and` : " with"} a validation error whose details the installed CLI version does not pass through`,
       (httpStatus && CODE_BY_STATUS[httpStatus]) || "VALIDATION_ERROR",
       [
-        "GitLab's own reason is not available through this CLI; re-check the field names and values you sent against the endpoint's documentation",
+        "Re-check the request's field names and values against the GitLab API documentation for this endpoint",
       ],
     );
   }
