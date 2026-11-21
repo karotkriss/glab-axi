@@ -137,7 +137,7 @@ Every response ends with `help:` hints for logical next steps. Run `glab-axi --h
 | `variable`| list / get / set / delete (plain, unmasked CI/CD variables; `list` hides values unless `--show-values` is passed) |
 | `secret`  | list / set / delete (masked & protected CI/CD variables; `list` never reveals values) |
 | `release` | list / view / create / edit / delete |
-| `snippet` | list / view / create / edit / delete (multi-file personal snippets; host-scoped, by global id) |
+| `snippet` | list / view / create / edit / delete (multi-file personal snippets by global id, host-scoped; an explicit `-R [host/]group/project` targets that project's snippets) |
 | `upload`  | upload a file and return its embed markdown/url/alt (binary-safe; for embedding evidence in issues and MRs) |
 | `runner`  | list / view (introspect the runners that serve a project; executor type is not exposed by the API) |
 | `search`  | issues / mrs / projects |
