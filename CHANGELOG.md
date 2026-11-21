@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-20
+
 ### Changed
 
 - `snippet` subcommands given an explicit `-R [host/]group/project` now address that project's snippets instead of personal snippets, so a personal snippet id passed with `-R` now returns not found. Use `--host` to select only the host for personal snippets.
@@ -183,7 +185,8 @@ First published release.
 - Installable Agent Skill generated from the CLI's own help, with a CI freshness check.
 - Generic host/project targeting via `-R [host/]group/project`, the `origin` git remote, or `GITLAB_HOST` (host-only override).
 
-[Unreleased]: https://github.com/karotkriss/glab-axi/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/karotkriss/glab-axi/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/karotkriss/glab-axi/releases/tag/v0.8.0
 [0.7.0]: https://github.com/karotkriss/glab-axi/releases/tag/v0.7.0
 [0.6.0]: https://github.com/karotkriss/glab-axi/releases/tag/v0.6.0
 [0.5.0]: https://github.com/karotkriss/glab-axi/releases/tag/v0.5.0
