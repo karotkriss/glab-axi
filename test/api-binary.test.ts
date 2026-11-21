@@ -20,7 +20,7 @@ const ZIP = Buffer.concat([
   Buffer.alloc(64, 0xff),
 ]);
 
-function respond(contentType: string, body: Buffer, exit = 0) {
+function respond(body: Buffer, exit = 0) {
   execFileMock.mockImplementation(
     (
       _cmd: string,
@@ -28,13 +28,7 @@ function respond(contentType: string, body: Buffer, exit = 0) {
       opts: { encoding?: string },
       cb: (e: unknown, out: string | Buffer, err: string | Buffer) => void,
     ) => {
-      const raw = Buffer.concat([
-        Buffer.from(
-          `HTTP/1.1 200 OK\nContent-Type: ${contentType}\r\nContent-Length: ${body.length}\r\n\r\n`,
-        ),
-        body,
-      ]);
-      const out = opts.encoding === "buffer" ? raw : raw.toString("utf8");
+      const out = opts.encoding === "buffer" ? body : body.toString("utf8");
       cb(exit ? Object.assign(new Error("x"), { code: exit }) : null, out, "");
       return { stdin: { on() {}, end() {} } };
     },
@@ -61,33 +55,37 @@ beforeEach(() => {
 
 describe("api binary responses", () => {
   it("--raw writes the response bytes unchanged", async () => {
-    respond("application/zip", ZIP);
+    respond(ZIP);
     const out = await run("projects/{project}/jobs/1/artifacts/a.zip", "--raw");
     expect(out.equals(ZIP)).toBe(true);
     expect(process.exitCode).toBeUndefined();
   });
 
-  it("without --raw prints a summary, not escaped bytes", async () => {
-    respond("application/zip", ZIP);
-    const out = (
-      await run("projects/{project}/jobs/1/artifacts/a.zip")
-    ).toString();
-    expect(out).toContain("content_type: application/zip");
-    expect(out).toContain(`bytes: ${ZIP.length}`);
-    expect(out).toContain("--raw");
-    expect(out).not.toContain("�");
-  });
-
-  it("keeps a JSON response on the TOON path", async () => {
-    respond("application/json", Buffer.from('{"id":7}'));
-    expect((await run("projects/{project}")).toString()).toContain("id: 7");
-  });
-
-  it("--raw on text still trims, as before", async () => {
-    respond("application/json", Buffer.from('{"id":7}\n'));
-    expect((await run("projects/{project}", "--raw")).toString()).toBe(
-      '{"id":7}\n',
+  it("--json writes the response bytes unchanged", async () => {
+    respond(ZIP);
+    const out = await run(
+      "projects/{project}/jobs/1/artifacts/a.zip",
+      "--json",
     );
+    expect(out.equals(ZIP)).toBe(true);
+  });
+
+  it("--raw keeps a text body's surrounding whitespace byte for byte", async () => {
+    const body = Buffer.from(' {"id":7}\r\n\n');
+    respond(body);
+    expect((await run("projects/{project}", "--raw")).equals(body)).toBe(true);
+  });
+
+  it("--raw on an empty response writes nothing", async () => {
+    respond(Buffer.alloc(0));
+    expect((await run("DELETE", "projects/{project}/x", "--raw")).length).toBe(
+      0,
+    );
+  });
+
+  it("keeps a JSON response on the TOON path without --raw", async () => {
+    respond(Buffer.from('{"id":7}'));
+    expect((await run("projects/{project}")).toString()).toContain("id: 7");
   });
 });
 
@@ -114,30 +112,23 @@ describe("api binary failures", () => {
       await run("projects/{project}/jobs/1/artifacts/a.zip", "--raw")
     ).toString();
     expect(out).toContain("1024 MB output limit");
-    expect(out).not.toContain("HTTP/1.1");
     expect(process.exitCode).not.toBe(0);
   });
 
   it("never pattern-matches a partial binary body as the error", async () => {
-    respond(
-      "application/zip",
-      Buffer.concat([ZIP, Buffer.from(" file not found ")]),
-      1,
-    );
+    respond(Buffer.concat([ZIP, Buffer.from(" file not found ")]), 1);
     const out = (
       await run("projects/{project}/jobs/1/artifacts/a.zip", "--raw")
     ).toString();
     expect(out).not.toContain("NOT_FOUND");
-    expect(out).not.toContain("HTTP/1.1");
     expect(out).toContain("Request failed with code 1");
   });
 
-  it("still maps a JSON error body behind the response headers", async () => {
-    respond("application/json", Buffer.from('{"message":"404 Not Found"}'), 1);
+  it("still maps a JSON error body on a --raw call", async () => {
+    respond(Buffer.from('{"message":"404 Not Found"}'), 1);
     const out = (
-      await run("projects/{project}/jobs/1/artifacts/a.zip")
+      await run("projects/{project}/jobs/1/artifacts/a.zip", "--raw")
     ).toString();
     expect(out).toContain("NOT_FOUND");
-    expect(out).not.toContain("HTTP/1.1");
   });
 });

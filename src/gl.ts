@@ -63,10 +63,9 @@ export interface GlApiOptions {
   headers?: string[];
   paginate?: boolean;
   /**
-   * Capture stdout as undecoded bytes (`ExecResult.bytes`), prefixed with the
-   * response headers (`-i`, skipped under `paginate`, which repeats them per
-   * page). Text decoding replaces every non-UTF-8 byte, so a binary response -
-   * a CI job artifact - cannot round-trip through a string.
+   * Capture stdout as undecoded bytes (`ExecResult.bytes`). Text decoding
+   * replaces every non-UTF-8 byte, so a binary response - a CI job artifact -
+   * cannot round-trip through a string.
    */
   binary?: boolean;
   ctx?: RepoContext;
@@ -145,9 +144,8 @@ function runApi(
   opts: GlApiOptions,
   extraArgs: string[] = [],
 ): Promise<ExecResult> {
-  const headers = opts.binary && !opts.paginate ? ["-i"] : [];
   return run(
-    [...buildApiArgs(path, opts), ...extraArgs, ...headers],
+    [...buildApiArgs(path, opts), ...extraArgs],
     opts.ctx,
     opts.body?.content ?? opts.stdinField?.value,
     opts.binary,
@@ -164,32 +162,13 @@ export function errorBody(result: ExecResult): string {
   return [result.stderr, result.stdout].filter(Boolean).join("\n");
 }
 
-/** Split `glab api -i` output into the body and the response Content-Type. */
-export function splitResponse(buf: Buffer): {
-  body: Buffer;
-  contentType: string | undefined;
-} {
-  const head = buf.subarray(0, 65536).toString("latin1");
-  const sep = head.match(/\r?\n\r?\n/);
-  if (!head.startsWith("HTTP/") || sep?.index === undefined) {
-    return { body: buf, contentType: undefined };
-  }
-  const type = /^content-type:[ \t]*(.+?)[ \t]*\r?$/im.exec(
-    head.slice(0, sep.index),
-  );
-  return {
-    body: buf.subarray(sep.index + sep[0].length),
-    contentType: type?.[1],
-  };
-}
-
 /**
  * The error-mapping view of a failed binary call: a bounded prefix of the body,
- * headers removed, and nothing at all when that prefix is not text - a partial
- * artifact must not be pattern-matched or rendered as the error message.
+ * and nothing at all when that prefix is not text - a partial artifact must not
+ * be pattern-matched or rendered as the error message.
  */
 function failureText(out: Buffer): string {
-  const prefix = splitResponse(out).body.subarray(0, 65536);
+  const prefix = out.subarray(0, 65536);
   try {
     return new TextDecoder("utf-8", { fatal: true }).decode(prefix, {
       stream: true,

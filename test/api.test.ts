@@ -28,6 +28,7 @@ vi.mock("../src/gl.js", () => {
 
 import { apiCommand, API_HELP } from "../src/commands/api.js";
 import { glApiResult, runJq } from "../src/gl.js";
+import { takeRawOutput } from "../src/rawout.js";
 import type { RepoContext } from "../src/context.js";
 
 const glApiResultMock = glApiResult as unknown as ReturnType<typeof vi.fn>;
@@ -358,7 +359,8 @@ describe("api --raw / --json", () => {
     glApiResultMock.mockResolvedValueOnce(
       ok({ id: 1, state: "opened", web_url: "x" }),
     );
-    const out = await apiCommand(["projects/{project}/x", "--raw"], ctx);
+    expect(await apiCommand(["projects/{project}/x", "--raw"], ctx)).toBe("");
+    const out = String(takeRawOutput());
     expect(JSON.parse(out)).toEqual({ id: 1, state: "opened", web_url: "x" });
     // Not TOON, and jq is never invoked for the plain escape hatch.
     expect(out).not.toContain("state: opened");
@@ -367,7 +369,8 @@ describe("api --raw / --json", () => {
 
   it("treats --json as an alias for --raw", async () => {
     glApiResultMock.mockResolvedValueOnce(ok({ id: 2, web_url: "y" }));
-    const out = await apiCommand(["projects/{project}/x", "--json"], ctx);
+    expect(await apiCommand(["projects/{project}/x", "--json"], ctx)).toBe("");
+    const out = String(takeRawOutput());
     expect(JSON.parse(out)).toEqual({ id: 2, web_url: "y" });
   });
 

@@ -1,12 +1,6 @@
 import { readFileSync } from "node:fs";
 import { encode } from "@toon-format/toon";
-import {
-  glApiResult,
-  projectId,
-  errorBody,
-  splitResponse,
-  type Json,
-} from "../gl.js";
+import { glApiResult, projectId, errorBody, type Json } from "../gl.js";
 import { AxiError, mapGlError } from "../errors.js";
 import type { RepoContext } from "../context.js";
 import { getAllFlags, getFlag, hasFlag } from "../args.js";
@@ -14,7 +8,6 @@ import { applyJq } from "../machine.js";
 import { cleanBody } from "../body.js";
 import { readStdin } from "../stdin.js";
 import { setRawOutput } from "../rawout.js";
-import { renderHelp } from "../toon.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -89,7 +82,7 @@ flags:
   --header <k:v>     extra HTTP header, repeatable
   --paginate         follow pagination and aggregate all pages
   --jq <expr>        extract a value from the raw JSON via jq (-r); takes precedence over --raw
-  --raw, --json      print the response verbatim instead of TOON; a binary response (e.g. a job artifact) is written as exact bytes, so redirect stdout to a file
+  --raw, --json      write the response body verbatim instead of TOON, byte for byte (redirect a binary such as a job artifact to a file)
 arrays:
   Name a key with [] (key[]=value) and repeat it to send an array, e.g. scopes,
   assignee_ids, iids or labels. A GET sends key[]= in the query string; any
@@ -541,20 +534,6 @@ function requestBody(
   };
 }
 
-const TEXT_TYPE =
-  /^(text\/|application\/(json|xml|javascript)|.+\+(json|xml))/i;
-
-/** Binary when the bytes are not UTF-8, or the server says it is not text. */
-function isBinary(body: Buffer, contentType: string | undefined): boolean {
-  if (contentType !== undefined && !TEXT_TYPE.test(contentType)) return true;
-  try {
-    new TextDecoder("utf-8", { fatal: true }).decode(body);
-    return false;
-  } catch {
-    return true;
-  }
-}
-
 export async function apiCommand(
   args: string[],
   ctx?: RepoContext,
@@ -602,61 +581,36 @@ export async function apiCommand(
       ? encodeArrayParams(method, path, fields, rawFields)
       : undefined;
   const json = input !== undefined ? readJsonInput(input) : arrays?.json;
+  const binary = raw && jqExpr === undefined;
   const result = await glApiResult(
     arrays?.path ?? path,
     json !== undefined
-      ? { method, paginate, ctx, binary: true, ...requestBody(json, headers) }
+      ? { method, paginate, ctx, binary, ...requestBody(json, headers) }
       : arrays
-        ? { method, headers, paginate, ctx, binary: true }
-        : { method, fields, rawFields, headers, paginate, ctx, binary: true },
+        ? { method, headers, paginate, ctx, binary }
+        : { method, fields, rawFields, headers, paginate, ctx, binary },
   );
 
   if (result.exitCode !== 0) {
     throw mapGlError(errorBody(result), result.exitCode);
   }
 
-  // The response arrives as undecoded bytes (`-i`, so headers lead the body):
-  // decoding as text replaces every non-UTF-8 byte, which is what corrupted
-  // binary downloads such as CI job artifacts.
-  const { body, contentType } = result.bytes
-    ? splitResponse(result.bytes)
-    : { body: Buffer.from(result.stdout), contentType: undefined };
-
-  if (isBinary(body, contentType)) {
-    if (raw && jqExpr === undefined) {
-      setRawOutput(body);
-      return "";
-    }
-    if (jqExpr !== undefined) {
-      throw new AxiError(
-        "Cannot apply --jq to a binary response",
-        "VALIDATION_ERROR",
-        ["Pass --raw to write the response bytes to stdout unchanged"],
-      );
-    }
-    return `${encode({
-      api_response: {
-        content_type: contentType ?? "unknown",
-        bytes: body.length,
-        binary: true,
-      },
-    })}\n${renderHelp([
-      "Run the same command with `--raw` and redirect stdout to a file to save the bytes unchanged",
-    ])}`;
+  // `--raw` writes the undecoded bytes: decoding as text replaces every
+  // non-UTF-8 byte, which is what corrupted binary downloads such as CI job
+  // artifacts.
+  if (binary) {
+    setRawOutput(result.bytes ?? Buffer.from(result.stdout));
+    return "";
   }
-  const text = body.toString("utf8");
 
-  // Escape hatches for callers that need to parse the response themselves,
-  // mirroring `gh api --jq` / raw JSON. Both operate on the raw, unmodified
-  // response, not the noise-stripped TOON view the default path renders.
+  // Escape hatch for callers that need to parse the response themselves,
+  // mirroring `gh api --jq`. It operates on the raw, unmodified response, not
+  // the noise-stripped TOON view the default path renders.
   if (jqExpr !== undefined) {
-    return applyJq(text, jqExpr);
-  }
-  if (raw) {
-    return text.trim();
+    return applyJq(result.stdout, jqExpr);
   }
 
-  const stdout = text;
+  const stdout = result.stdout;
   let parsed: Json;
   try {
     parsed = JSON.parse(stdout);
