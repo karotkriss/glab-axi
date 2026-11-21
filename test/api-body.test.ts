@@ -240,30 +240,34 @@ describe("api --input", () => {
     expect(glApiResultMock).not.toHaveBeenCalled();
   });
 
-  it("rejects an invalid UTF-8 file and a UTF-8 BOM with a hint", async () => {
+  it("rejects an invalid UTF-8 file with a re-encode hint", async () => {
     const binary = join(dir, "binary.json");
     writeFileSync(binary, Buffer.from([0xff, 0xfe, 0x7b]));
     await expect(
       apiCommand(["POST", "x", "--input", binary], ctx),
     ).rejects.toMatchObject({
       message: expect.stringContaining("not valid UTF-8"),
-      suggestions: expect.arrayContaining([expect.stringContaining("--input")]),
+      suggestions: expect.arrayContaining([
+        expect.stringContaining("Re-encode the file as UTF-8"),
+      ]),
     });
 
+    expect(glApiResultMock).not.toHaveBeenCalled();
+  });
+
+  it("accepts a UTF-8 BOM in a body file and sends the JSON without it", async () => {
     const bom = join(dir, "bom.json");
     writeFileSync(
       bom,
       Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('{"a":1}')]),
     );
-    await expect(
-      apiCommand(["POST", "x", "--input", bom], ctx),
-    ).rejects.toMatchObject({
-      message: "JSON body starts with a UTF-8 BOM",
-      suggestions: expect.arrayContaining([
-        expect.stringContaining("byte order mark"),
-      ]),
+    glApiResultMock.mockResolvedValue({
+      exitCode: 0,
+      stdout: "{}",
+      stderr: "",
     });
-    expect(glApiResultMock).not.toHaveBeenCalled();
+    await apiCommand(["POST", "x", "--input", bom], ctx);
+    expect(sentBody().content).toBe('{"a":1}');
   });
 
   it("sends the caller Content-Type once and keeps other headers", async () => {
@@ -303,14 +307,6 @@ describe("api --input", () => {
     );
     expect(glApiResultMock).not.toHaveBeenCalled();
     expect(readStdinMock).not.toHaveBeenCalled();
-  });
-
-  it("rejects a UTF-8 BOM on stdin with a hint", async () => {
-    readStdinMock.mockReturnValue('\uFEFF{"a":1}');
-    await expect(
-      apiCommand(["POST", "x", "--input", "-"], ctx),
-    ).rejects.toThrow("JSON body starts with a UTF-8 BOM");
-    expect(glApiResultMock).not.toHaveBeenCalled();
   });
 
   it("rejects an empty stdin body", async () => {

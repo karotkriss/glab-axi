@@ -64,4 +64,11 @@ describe("readStdin", () => {
     readFileSyncMock.mockReturnValue(withReplacementChar);
     expect(readStdin({ rejectBinaryMessage: "nope" })).toBe("hi � there");
   });
+
+  it("strips a leading UTF-8 BOM when validating strictly", () => {
+    readFileSyncMock.mockReturnValue(
+      Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('{"a":1}')]),
+    );
+    expect(readStdin({ rejectBinaryMessage: "nope" })).toBe('{"a":1}');
+  });
 });
