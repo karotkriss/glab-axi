@@ -134,7 +134,7 @@ Every response ends with `help:` hints for logical next steps. Run `glab-axi --h
 | `project` | view / list / create / delete (`delete` names its target and requires `--yes`) |
 | `repo`    | create-file / create-branch (writes the project's git contents) |
 | `label`   | list / create / edit / delete |
-| `variable`| list / get / set / delete (plain, unmasked CI/CD variables) |
+| `variable`| list / get / set / delete (plain, unmasked CI/CD variables; `list` hides values unless `--show-values` is passed) |
 | `secret`  | list / set / delete (masked & protected CI/CD variables; `list` never reveals values) |
 | `release` | list / view / create / edit / delete |
 | `snippet` | list / view / create / edit / delete (multi-file personal snippets; host-scoped, by global id) |
