@@ -23,7 +23,7 @@ describe("mapGlError", () => {
     );
     expect(err.code).toBe("CONFLICT");
     expect(err.message).toBe(
-      "GitLab rejected the request with HTTP 409 and a validation error whose details the installed CLI version does not pass through",
+      "GitLab rejected the request with HTTP 409 and an error whose details the installed CLI version does not pass through",
     );
   });
 

@@ -271,7 +271,7 @@ describe("object-valued GitLab errors", () => {
       glApi("projects/x/members", { method: "POST" }),
     ).rejects.toMatchObject({
       code: "VALIDATION_ERROR",
-      message: expect.stringContaining("with HTTP 400 and"),
+      message: expect.stringContaining("with HTTP 400 and a validation error"),
     });
     expect(calls).toHaveLength(2);
   });
@@ -289,7 +289,7 @@ describe("object-valued GitLab errors", () => {
     });
     await expect(glApiList("projects/x/members")).rejects.toMatchObject({
       code: "FORBIDDEN",
-      message: expect.stringContaining("with HTTP 403 and"),
+      message: expect.stringContaining("with HTTP 403 and an error whose"),
     });
     expect(calls).toHaveLength(1);
   });
