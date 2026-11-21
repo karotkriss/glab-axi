@@ -67,7 +67,7 @@ flags{delete}:
   (none)
 notes:
   Without -R, snippet addresses personal snippets by their global id and is host-scoped (--host/remote select only the host).
-  With an explicit -R <[host/]group/project>, every subcommand targets that project's snippets (project snippet ids are separate from personal ones). A project inferred from the git remote does not switch modes.
+  With an explicit -R <[host/]group/project>, every subcommand targets that project's snippets (a project snippet is addressable only under its project, and a personal snippet only without -R). A project inferred from the git remote does not switch modes.
   create always makes a new snippet; retrying create makes another new snippet because GitLab provides no idempotency key.
   A file source name=@path reads the file, name=@- reads stdin (only one), and name=text is literal inline content.
   edit sends the whole files[] change set in one request: an existing file is updated, a new one is created, and --delete-file removes one - so a re-sync of several files is a single atomic edit.

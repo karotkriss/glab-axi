@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `snippet` subcommands given an explicit `-R [host/]group/project` now address that project's snippets instead of personal snippets, so a personal snippet id passed with `-R` now returns not found. Use `--host` to select only the host for personal snippets.
 - `variable list` no longer prints variable values. It lists each key with its masked, protected, and environment scope flags, so surveying variables cannot leak a value into an agent transcript. Pass `--show-values` to include the `value` column. `variable get` still shows the value of the one variable it names.
 
 ### Added

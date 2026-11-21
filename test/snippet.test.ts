@@ -406,7 +406,7 @@ describe("snippet -R (project snippets)", () => {
 
   it("a project inferred from the git remote stays personal", async () => {
     glApiListMock.mockResolvedValueOnce({ data: [], total: 0 });
-    await snippetCommand(["list"], { ...pctx, source: "remote" });
+    await snippetCommand(["list"], { ...pctx, source: "git" });
     expect(glApiListMock.mock.calls[0][0]).toBe("snippets?per_page=30");
   });
 });
