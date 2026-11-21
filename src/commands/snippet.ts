@@ -4,6 +4,7 @@ import {
   glApiList,
   glApiResult,
   glRaw,
+  requireProject,
   errorBody,
   type Json,
 } from "../gl.js";
@@ -26,11 +27,11 @@ import {
 } from "../toon.js";
 
 // ---------------------------------------------------------------------------
-// snippet: multi-file personal snippets (GitLab's /snippets API).
+// snippet: multi-file snippets (GitLab's /snippets and /projects/:id/snippets).
 //
-// A snippet is a small git repo of one or more files, addressed by its global
-// id and scoped to a host (not a project) - so this command is host-scoped like
-// `search`/`auth`, targeting via -R/--host/remote, and never requireProject's.
+// A snippet is a small git repo of one or more files. By default it is a
+// personal snippet addressed by its global id, host-scoped like `search`/`auth`.
+// An explicit -R switches every subcommand to that project's snippets.
 //
 // The multi-file `files[]` array cannot be expressed with `-f`/`-F` form fields
 // (a nested array), which is why create/edit send a real JSON body through
@@ -38,6 +39,18 @@ import {
 // ---------------------------------------------------------------------------
 
 const JSON_TYPE = "application/json";
+
+/**
+ * Collection path: project snippets (`projects/:id/snippets`) when the project
+ * was named explicitly with -R, personal snippets (`snippets`) otherwise. A
+ * project inferred from the git remote deliberately stays personal, so existing
+ * calls made inside a checkout keep their behaviour.
+ */
+function snippetsPath(ctx?: RepoContext): string {
+  return ctx?.source === "flag" && ctx.project
+    ? `projects/${requireProject(ctx)}/snippets`
+    : "snippets";
+}
 
 export const SNIPPET_HELP = `usage: glab-axi snippet <subcommand> [flags]
 subcommands[5]:
@@ -53,7 +66,8 @@ flags{edit,update}:
 flags{delete}:
   (none)
 notes:
-  snippet addresses personal snippets by their global id and is host-scoped (-R/--host/remote select only the host), not project-scoped.
+  Without -R, snippet addresses personal snippets by their global id and is host-scoped (--host/remote select only the host).
+  With an explicit -R <[host/]group/project>, every subcommand targets that project's snippets (project snippet ids are separate from personal ones). A project inferred from the git remote does not switch modes.
   create always makes a new snippet; retrying create makes another new snippet because GitLab provides no idempotency key.
   A file source name=@path reads the file, name=@- reads stdin (only one), and name=text is literal inline content.
   edit sends the whole files[] change set in one request: an existing file is updated, a new one is created, and --delete-file removes one - so a re-sync of several files is a single atomic edit.
@@ -62,7 +76,9 @@ examples:
   glab-axi snippet view 13 --host gitlab.example.com
   glab-axi snippet view 13 --file install.sh --host gitlab.example.com
   glab-axi snippet create --title "Installer" --file install.sh=@install.sh --file README.md="# Installer" --host gitlab.example.com
-  glab-axi snippet edit 13 --file install.sh=@install.sh --delete-file old.sh --host gitlab.example.com`;
+  glab-axi snippet edit 13 --file install.sh=@install.sh --delete-file old.sh --host gitlab.example.com
+  glab-axi snippet create --title "Installer" --file install.sh=@install.sh -R gitlab.example.com/group/project
+  glab-axi snippet list -R gitlab.example.com/group/project`;
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -178,7 +194,7 @@ function validateVisibility(v: string | undefined): string | undefined {
 async function snippetList(args: string[], ctx?: RepoContext): Promise<string> {
   const limit = parseLimit(takeFlag(args, "--limit"), 30);
   const { data: items, total: totalCount } = await glApiList<Json>(
-    `snippets?per_page=${limit}`,
+    `${snippetsPath(ctx)}?per_page=${limit}`,
     { ctx },
   );
   if (items.length === 0) {
@@ -208,7 +224,7 @@ function refFromRawUrl(rawUrl: unknown): string {
 async function snippetView(args: string[], ctx?: RepoContext): Promise<string> {
   const file = takeFlag(args, "--file");
   const id = takeNumber(args, "snippet");
-  const snippet = await glApi<Json>(`snippets/${id}`, { ctx });
+  const snippet = await glApi<Json>(`${snippetsPath(ctx)}/${id}`, { ctx });
 
   if (file) {
     const files: Json[] = Array.isArray(snippet.files) ? snippet.files : [];
@@ -225,7 +241,7 @@ async function snippetView(args: string[], ctx?: RepoContext): Promise<string> {
     }
     const ref = refFromRawUrl(match.raw_url);
     const content = await glRaw(
-      `snippets/${id}/files/${ref}/${encodeURIComponent(file)}/raw?line_ending=raw`,
+      `${snippetsPath(ctx)}/${id}/files/${ref}/${encodeURIComponent(file)}/raw?line_ending=raw`,
       { ctx },
     );
     return renderOutput([
@@ -277,7 +293,7 @@ async function snippetCreate(
   };
   if (description !== undefined) payload.description = description;
 
-  const created = await glApi<Json>("snippets", {
+  const created = await glApi<Json>(snippetsPath(ctx), {
     method: "POST",
     body: jsonBody(payload),
     ctx,
@@ -327,7 +343,7 @@ async function snippetEdit(args: string[], ctx?: RepoContext): Promise<string> {
 
   // GitLab's files[] update needs the right action per file (create vs update vs
   // delete), so read the current file set first.
-  const current = await glApi<Json>(`snippets/${id}`, { ctx });
+  const current = await glApi<Json>(`${snippetsPath(ctx)}/${id}`, { ctx });
   const existing = new Map<string, Json>();
   for (const file of Array.isArray(current.files) ? current.files : []) {
     if (typeof file?.path === "string") existing.set(file.path, file);
@@ -341,7 +357,7 @@ async function snippetEdit(args: string[], ctx?: RepoContext): Promise<string> {
     if (currentFile) {
       const ref = refFromRawUrl(currentFile.raw_url);
       const currentContent = await glRaw(
-        `snippets/${id}/files/${ref}/${encodeURIComponent(src.path)}/raw?line_ending=raw`,
+        `${snippetsPath(ctx)}/${id}/files/${ref}/${encodeURIComponent(src.path)}/raw?line_ending=raw`,
         { ctx },
       );
       if (currentContent === src.content) continue;
@@ -396,7 +412,7 @@ async function snippetEdit(args: string[], ctx?: RepoContext): Promise<string> {
     ]);
   }
 
-  const updated = await glApi<Json>(`snippets/${id}`, {
+  const updated = await glApi<Json>(`${snippetsPath(ctx)}/${id}`, {
     method: "PUT",
     body: jsonBody(payload),
     ctx,
@@ -432,7 +448,7 @@ async function snippetDelete(
   ctx?: RepoContext,
 ): Promise<string> {
   const id = takeNumber(args, "snippet");
-  const path = `snippets/${id}`;
+  const path = `${snippetsPath(ctx)}/${id}`;
   const output = (alreadyAbsent: boolean): string =>
     renderOutput([
       alreadyAbsent
