@@ -128,3 +128,13 @@ export function argumentTooLargeError(): AxiError {
     ],
   );
 }
+
+export function outputTooLargeError(limitMb: number): AxiError {
+  return new AxiError(
+    `Response exceeds the ${limitMb} MB output limit`,
+    "OUTPUT_TOO_LARGE",
+    [
+      "Narrow the request (a smaller page, a single file) or download a large file such as a job artifact directly over HTTP from GitLab",
+    ],
+  );
+}

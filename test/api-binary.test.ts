@@ -112,6 +112,35 @@ describe("api binary failures", () => {
       await run("projects/{project}/jobs/1/artifacts/a.zip", "--raw")
     ).toString();
     expect(out).toContain("1024 MB output limit");
+    expect(out).toContain("OUTPUT_TOO_LARGE");
+    expect(out).toContain("directly over HTTP");
+    expect(process.exitCode).not.toBe(0);
+  });
+
+  it("reports an over-cap text response with the 20 MB cap", async () => {
+    execFileMock.mockImplementation(
+      (
+        _cmd: string,
+        _args: string[],
+        _opts: unknown,
+        cb: (e: unknown, out: Buffer, err: Buffer) => void,
+      ) => {
+        cb(
+          Object.assign(new RangeError("stdout maxBuffer length exceeded"), {
+            code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
+          }),
+          ZIP,
+          Buffer.alloc(0),
+        );
+        return { stdin: { on() {}, end() {} } };
+      },
+    );
+    const out = (
+      await run("projects/{project}/jobs/1/artifacts/a.zip", "--jq", ".")
+    ).toString();
+    expect(out).toContain("20 MB output limit");
+    expect(out).toContain("OUTPUT_TOO_LARGE");
+    expect(out).toContain("directly over HTTP");
     expect(process.exitCode).not.toBe(0);
   });
 
