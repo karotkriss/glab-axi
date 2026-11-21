@@ -95,6 +95,10 @@ nested:
   "85". --field position={...} sends that JSON object. --raw-field does not
   parse JSON. --input cannot be combined with --field or --raw-field.
   The graphql path keeps the wrapped CLI's encoding, with fields becoming variables.
+ids:
+  --field user_id=12 sends the number 12. An endpoint whose parameter is a
+  string (comma-separated ids, e.g. projects/{project}/invitations) needs
+  --raw-field user_id=12 instead.
 examples:
   glab-axi api projects/{project}/members
   glab-axi api GET projects/{project}/merge_requests --field state=opened

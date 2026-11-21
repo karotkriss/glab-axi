@@ -8,7 +8,36 @@ describe("mapGlError", () => {
       1,
     );
     expect(err.code).toBe("VALIDATION_ERROR");
-    expect(err.message).toBe("GitLab rejected the request as invalid");
+    expect(err.message).toContain("structured error body");
+    expect(err.message).not.toMatch(/masked/i);
+    expect(err.suggestions.join(" ")).not.toMatch(/masked/i);
+  });
+
+  it("reports the HTTP status of an object-valued error recovered by gl.ts", () => {
+    const err = mapGlError(
+      "json: cannot unmarshal object into Go struct field .Message of type string (HTTP 409)",
+      1,
+    );
+    expect(err.code).toBe("CONFLICT");
+    expect(err.message).toContain("(HTTP 409)");
+  });
+
+  it("surfaces GitLab's own message with the status for each error shape", () => {
+    expect(mapGlError('Bad (HTTP 400)\n{"message":"Bad"}', 1).message).toBe(
+      "Bad (HTTP 400)",
+    );
+    expect(
+      mapGlError(
+        'HTTP 400\n{"message":{"user_id":["is invalid"],"base":["x"]}}',
+        1,
+      ).message,
+    ).toBe("user_id is invalid; base x (HTTP 400)");
+    expect(
+      mapGlError(
+        'glab: HTTP 400\n{"error":"invalid_grant","error_description":"bad grant"}',
+        1,
+      ).message,
+    ).toBe("invalid_grant: bad grant (HTTP 400)");
   });
 
   it("still prefers a real HTTP status over the Go unmarshal fallback", () => {
@@ -17,7 +46,7 @@ describe("mapGlError", () => {
       1,
     );
     expect(err.code).toBe("VALIDATION_ERROR");
-    expect(err.message).toBe("key has already been taken");
+    expect(err.message).toBe("key has already been taken (HTTP 422)");
   });
 
   it("does not read a 401 inside an id as an auth failure", () => {

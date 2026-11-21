@@ -61,33 +61,69 @@ const patterns: ErrorPattern[] = [
     code: "VALIDATION_ERROR",
     message: (_m, body) => extractApiMessage(body) ?? "Validation error",
   },
-  {
-    // The glab Go client fails to unmarshal a structured (object-valued)
-    // GitLab error body into its string `.Message` field, so no HTTP-status
-    // text ever reaches the patterns above; this reliably indicates GitLab
-    // rejected the request with a 400-family validation error.
-    pattern: /unmarshal .*into Go struct field .*\.Message of type string/i,
-    code: "VALIDATION_ERROR",
-    message: () => "GitLab rejected the request as invalid",
-    suggestions: () => [
-      "Re-check the values you supplied against GitLab's validation rules",
-      "For example, masked CI/CD variable values must be at least 8 characters, contain no whitespace, and use the base64 alphabet",
-    ],
-  },
 ];
+
+/** Flatten a GitLab `message` value: string, `{field: [..]}` object, or array. */
+function flattenMessage(v: unknown): string | undefined {
+  if (typeof v === "string") return v;
+  if (Array.isArray(v)) {
+    const parts = v.map(flattenMessage).filter(Boolean);
+    return parts.length ? parts.join(", ") : undefined;
+  }
+  if (v && typeof v === "object") {
+    const parts = Object.entries(v).flatMap(([k, val]) => {
+      const m = flattenMessage(val);
+      return m ? [`${k} ${m}`] : [];
+    });
+    return parts.length ? parts.join("; ") : undefined;
+  }
+  return undefined;
+}
 
 /** Pull a human message out of a GitLab JSON error body. */
 function extractApiMessage(body: string): string | undefined {
-  // GitLab returns {"message":"..."} or {"error":"..."} or nested objects.
+  const start = body.indexOf("{");
+  const end = body.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    try {
+      const o = JSON.parse(body.slice(start, end + 1));
+      // {"message":..} | {"error":..,"error_description":..} | {"errors":..}
+      const msg = flattenMessage(o.message) ?? flattenMessage(o.errors);
+      if (msg) return scrubTool(msg);
+      const err = flattenMessage(o.error);
+      if (err) {
+        const desc = flattenMessage(o.error_description);
+        return scrubTool(desc ? `${err}: ${desc}` : err);
+      }
+    } catch {
+      // fall through to the pattern scan for a truncated or mixed body
+    }
+  }
   const msgMatch = body.match(/"message"\s*:\s*"([^"]+)"/);
   if (msgMatch) return scrubTool(msgMatch[1]);
   const errMatch = body.match(/"error"\s*:\s*"([^"]+)"/);
   if (errMatch) return scrubTool(errMatch[1]);
-  // Nested: {"message":{"base":["..."]}} or {"message":{"title":["..."]}}
-  const nested = body.match(/"message"\s*:\s*\{[^}]*?\[\s*"([^"]+)"/);
-  if (nested) return scrubTool(nested[1]);
   return undefined;
 }
+
+/**
+ * The glab Go client fails to unmarshal a structured (object-valued) GitLab
+ * error body into its string `.Message` field, so neither the body nor (without
+ * `-i`) the HTTP status ever reaches us. `gl.ts` recovers the status; the body
+ * is unrecoverable through the wrapped CLI.
+ */
+export const UNMARSHAL_QUIRK =
+  /unmarshal .*into Go struct field .*\.Message of type string/i;
+
+const CODE_BY_STATUS: Record<number, string> = {
+  400: "VALIDATION_ERROR",
+  401: "AUTH_REQUIRED",
+  403: "FORBIDDEN",
+  404: "NOT_FOUND",
+  409: "CONFLICT",
+  422: "VALIDATION_ERROR",
+  429: "RATE_LIMITED",
+};
 
 function firstErrorLine(stderr: string): string {
   return scrubTool(stderr.trim().split("\n")[0] ?? "");
@@ -95,11 +131,26 @@ function firstErrorLine(stderr: string): string {
 
 /** Translate raw CLI stderr into a structured AxiError. */
 export function mapGlError(stderr: string, exitCode: number): AxiError {
+  const status = stderr.match(/\(HTTP (\d{3})\)|HTTP (\d{3})/);
+  const httpStatus = status ? Number(status[1] ?? status[2]) : undefined;
+  const tag = httpStatus ? ` (HTTP ${httpStatus})` : "";
+  if (UNMARSHAL_QUIRK.test(stderr)) {
+    return new AxiError(
+      `GitLab rejected the request${tag} with a structured error body the CLI cannot display`,
+      (httpStatus && CODE_BY_STATUS[httpStatus]) || "VALIDATION_ERROR",
+      [
+        "GitLab's own reason is not available through this CLI; re-check the field names and values you sent against the endpoint's documentation",
+      ],
+    );
+  }
   for (const { pattern, code, message, suggestions } of patterns) {
     const match = stderr.match(pattern);
     if (match) {
+      const m = message(match, stderr);
       return new AxiError(
-        message(match, stderr),
+        code === "AUTH_REQUIRED" || code === "RATE_LIMITED" || !tag
+          ? m
+          : `${m}${tag}`,
         code,
         suggestions?.(match) ?? [],
       );

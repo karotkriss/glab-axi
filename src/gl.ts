@@ -7,6 +7,7 @@ import {
   AxiError,
   glNotInstalledError,
   mapGlError,
+  UNMARSHAL_QUIRK,
   scrubTool,
 } from "./errors.js";
 import type { RepoContext } from "./context.js";
@@ -140,17 +141,25 @@ function buildApiArgs(path: string, opts: GlApiOptions): string[] {
  * child's stdin. Every entry point goes through here so a caller cannot get
  * the argv-vs-stdin split wrong by reaching for `run` directly.
  */
-function runApi(
+async function runApi(
   path: string,
   opts: GlApiOptions,
   extraArgs: string[] = [],
 ): Promise<ExecResult> {
-  return run(
-    [...buildApiArgs(path, opts), ...extraArgs],
-    opts.ctx,
-    opts.body?.content ?? opts.stdinField?.value,
-    opts.binary,
-  );
+  const args = [...buildApiArgs(path, opts), ...extraArgs];
+  const input = opts.body?.content ?? opts.stdinField?.value;
+  const result = await run(args, opts.ctx, input, opts.binary);
+  if (result.exitCode === 0 || !UNMARSHAL_QUIRK.test(result.stderr))
+    return result;
+  // The CLI drops both the status and the body of an object-valued error.
+  // Replay with `-i` to read the status line. Only a replay that is itself a
+  // 4xx is trusted, so a request GitLab did not reject is never re-reported.
+  // ponytail: a replay re-sends the request; harmless for a rejected 4xx.
+  const probe = await run([...args, "-i"], opts.ctx, input);
+  const status = probe.stdout.match(/^HTTP\/\S+ (4\d\d)\b/m)?.[1];
+  return status
+    ? { ...result, stderr: `${result.stderr.trim()} (HTTP ${status})` }
+    : result;
 }
 
 /**
