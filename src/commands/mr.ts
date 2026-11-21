@@ -1157,7 +1157,18 @@ async function mrMerge(args: string[], ctx?: RepoContext): Promise<string> {
   // rebase is asynchronous: kick it off, poll to completion, THEN merge.
   let mergeSnapshot = mr;
   let gate: PipelineGate | undefined;
-  if (auto && (sha === undefined || mr.sha === sha)) {
+  if (auto) {
+    if (sha !== undefined && mr.sha !== sha) {
+      const r = repoFlag({ domain: "mr", action: "merge", repo: ctx });
+      throw new AxiError(
+        `Merge request !${iid} was not set to auto-merge: its source branch head is ${String(mr.sha ?? "unknown")}, not the pinned ${sha}`,
+        "CONFLICT",
+        [
+          `Run \`glab-axi mr checks ${iid}${r}\` to verify the current head, then merge again with --sha <new-head>`,
+          `If ${sha} was just pushed, GitLab may not have recorded it on the merge request yet: re-run \`glab-axi mr merge ${iid} --auto --sha ${sha}${r}\` in a few seconds, which then waits for its pipeline`,
+        ],
+      );
+    }
     ({ mr: mergeSnapshot, gate } = await awaitHeadPipeline(mr, iid, ctx));
   }
   if (method === "rebase") {

@@ -745,11 +745,7 @@ describe("mr merge", () => {
 
   it("--auto --sha fails with CONFLICT at once when the pinned sha is not the current head", async () => {
     glApiMock.mockImplementation(async (path: string) => {
-      if (path.endsWith("/merge"))
-        throw new AxiError(
-          "SHA does not match HEAD of source branch",
-          "CONFLICT",
-        );
+      if (path.endsWith("/merge")) return mr({ state: "merged" });
       if (path === `projects/${PID}/pipelines?per_page=1`)
         return [{ id: 7, sha: OLD_HEAD, ref: "main", status: "success" }];
       if (path.endsWith("/pipelines?per_page=1")) return [];
@@ -764,6 +760,9 @@ describe("mr merge", () => {
     expect((err as AxiError).suggestions.join("\n")).not.toContain(
       `--sha ${NEW_HEAD}`,
     );
+    expect(
+      glApiMock.mock.calls.some((c) => String(c[0]).endsWith("/merge")),
+    ).toBe(false);
     expect(
       glApiMock.mock.calls.filter(
         (c) => c[0] === `projects/${PID}/merge_requests/42`,
