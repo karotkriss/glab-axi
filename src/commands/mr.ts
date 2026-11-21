@@ -1157,7 +1157,7 @@ async function mrMerge(args: string[], ctx?: RepoContext): Promise<string> {
   // rebase is asynchronous: kick it off, poll to completion, THEN merge.
   let mergeSnapshot = mr;
   let gate: PipelineGate | undefined;
-  if (auto) {
+  if (auto && (sha === undefined || mr.sha === sha)) {
     ({ mr: mergeSnapshot, gate } = await awaitHeadPipeline(mr, iid, ctx));
   }
   if (method === "rebase") {
