@@ -20,8 +20,8 @@ export interface ExecResult {
   /**
    * The undecoded response, present only when the call asked for `binary`.
    * On a binary call `stdout` is empty on success (decoding a large artifact
-   * as text is both wasteful and lossy); on failure it holds the decoded text
-   * so error mapping works as usual.
+   * as text is both wasteful and lossy); on failure it holds a bounded text
+   * prefix of the body for error mapping.
    */
   bytes?: Buffer;
 }
@@ -164,6 +164,41 @@ export function errorBody(result: ExecResult): string {
   return [result.stderr, result.stdout].filter(Boolean).join("\n");
 }
 
+/** Split `glab api -i` output into the body and the response Content-Type. */
+export function splitResponse(buf: Buffer): {
+  body: Buffer;
+  contentType: string | undefined;
+} {
+  const head = buf.subarray(0, 65536).toString("latin1");
+  const sep = head.match(/\r?\n\r?\n/);
+  if (!head.startsWith("HTTP/") || sep?.index === undefined) {
+    return { body: buf, contentType: undefined };
+  }
+  const type = /^content-type:[ \t]*(.+?)[ \t]*\r?$/im.exec(
+    head.slice(0, sep.index),
+  );
+  return {
+    body: buf.subarray(sep.index + sep[0].length),
+    contentType: type?.[1],
+  };
+}
+
+/**
+ * The error-mapping view of a failed binary call: a bounded prefix of the body,
+ * headers removed, and nothing at all when that prefix is not text - a partial
+ * artifact must not be pattern-matched or rendered as the error message.
+ */
+function failureText(out: Buffer): string {
+  const prefix = splitResponse(out).body.subarray(0, 65536);
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(prefix, {
+      stream: true,
+    });
+  } catch {
+    return "";
+  }
+}
+
 function run(
   args: string[],
   ctx?: RepoContext,
@@ -195,6 +230,15 @@ function run(
           resolve({ stdout: "", stderr: "E2BIG", exitCode: 127 });
           return;
         }
+        if (err && err.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") {
+          const cap = binary ? MAX_BINARY_BUFFER_BYTES : MAX_BUFFER_BYTES;
+          resolve({
+            stdout: "",
+            stderr: `Response exceeds the ${cap / 1024 / 1024} MB output limit`,
+            exitCode: 1,
+          });
+          return;
+        }
         const exitCode = err
           ? typeof err.code === "number"
             ? err.code
@@ -203,7 +247,7 @@ function run(
         const err2 = String(stderr ?? "");
         if (Buffer.isBuffer(out)) {
           resolve({
-            stdout: exitCode === 0 ? "" : out.toString("utf8"),
+            stdout: exitCode === 0 ? "" : failureText(out),
             stderr: err2,
             exitCode,
             bytes: out,

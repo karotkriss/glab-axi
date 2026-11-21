@@ -1,6 +1,12 @@
 import { readFileSync } from "node:fs";
 import { encode } from "@toon-format/toon";
-import { glApiResult, projectId, errorBody, type Json } from "../gl.js";
+import {
+  glApiResult,
+  projectId,
+  errorBody,
+  splitResponse,
+  type Json,
+} from "../gl.js";
 import { AxiError, mapGlError } from "../errors.js";
 import type { RepoContext } from "../context.js";
 import { getAllFlags, getFlag, hasFlag } from "../args.js";
@@ -532,25 +538,6 @@ function requestBody(
   return {
     headers: kept,
     body: { content, contentType: contentType ?? "application/json" },
-  };
-}
-
-/** Split `glab api -i` output into the body and the response Content-Type. */
-function splitResponse(buf: Buffer): {
-  body: Buffer;
-  contentType: string | undefined;
-} {
-  const head = buf.subarray(0, 65536).toString("latin1");
-  const sep = head.match(/\r?\n\r?\n/);
-  if (!head.startsWith("HTTP/") || sep?.index === undefined) {
-    return { body: buf, contentType: undefined };
-  }
-  const type = /^content-type:[ \t]*(.+?)[ \t]*\r?$/im.exec(
-    head.slice(0, sep.index),
-  );
-  return {
-    body: buf.subarray(sep.index + sep[0].length),
-    contentType: type?.[1],
   };
 }
 

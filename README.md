@@ -236,6 +236,12 @@ glab-axi api projects/{project} --raw | jq .default_branch
 
 `--jq <expr>` applies a jq expression (raw output, like `jq -r`) and needs the `jq` binary on `PATH`; `--raw` (alias `--json`) prints the JSON response verbatim and needs nothing. When both are passed, `--jq` wins.
 
+A binary response, such as a CI job artifact, is written by `--raw` as the exact bytes, so redirect stdout to a file. Without `--raw`, `api` prints a short summary of a binary response (content type and size) instead of the bytes, and `--jq` refuses it.
+
+```sh
+glab-axi api projects/{project}/jobs/123/artifacts/app.aab --raw > app.aab
+```
+
 `mr list` and `mr view` expose the same `--jq`/`--json` flags, operating on GitLab's raw response and bypassing schema flags like `--full`/`--comments`/`--reviews`:
 
 ```sh
