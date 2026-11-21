@@ -26,6 +26,12 @@ vi.mock("../src/gl.js", () => {
   };
 });
 
+// The --auto pipeline gate and the rebase poll wait between reads; resolve the
+// delay at once so the tests exercise the loop, not the clock.
+vi.mock("../src/sleep.js", () => ({
+  sleep: vi.fn().mockResolvedValue(undefined),
+}));
+
 import { mrCommand } from "../src/commands/mr.js";
 import { glApi, glApiResult, runJq } from "../src/gl.js";
 import { AxiError, exitCodeForError, mapGlError } from "../src/errors.js";
@@ -252,6 +258,19 @@ describe("mr create", () => {
     expect(createCall[1].rawFields).toContain("title=Draft: T");
   });
 });
+
+const OLD_HEAD = "a".repeat(40);
+const NEW_HEAD = "b".repeat(40);
+const MERGE_REF = "c".repeat(40);
+
+/** An MR whose head pipeline ran on its current head. */
+function gatedMr(overrides: Record<string, unknown> = {}) {
+  return mr({
+    sha: NEW_HEAD,
+    head_pipeline: { id: 101, sha: NEW_HEAD, status: "pending" },
+    ...overrides,
+  });
+}
 
 describe("mr merge", () => {
   it("combines a full MR URL's project with an explicit host-only selector", async () => {
@@ -496,7 +515,7 @@ describe("mr merge", () => {
   });
 
   it("--auto sets merge_when_pipeline_succeeds and reports the scheduled state", async () => {
-    glApiMock.mockResolvedValueOnce(mr()); // state check
+    glApiMock.mockResolvedValueOnce(gatedMr()); // state check
     glApiMock.mockResolvedValueOnce(
       mr({ state: "opened", merge_when_pipeline_succeeds: true }),
     ); // merge PUT
@@ -510,7 +529,7 @@ describe("mr merge", () => {
   });
 
   it("--auto merges immediately when GitLab reports the MR merged", async () => {
-    glApiMock.mockResolvedValueOnce(mr()); // state check
+    glApiMock.mockResolvedValueOnce(gatedMr()); // state check
     glApiMock.mockResolvedValueOnce(
       mr({ state: "merged", merge_commit_sha: "abc123" }),
     ); // merge PUT merged right away
@@ -520,12 +539,135 @@ describe("mr merge", () => {
   });
 
   it("--auto combines with --squash", async () => {
-    glApiMock.mockResolvedValueOnce(mr()); // state check
+    glApiMock.mockResolvedValueOnce(gatedMr()); // state check
     glApiMock.mockResolvedValueOnce(mr({ state: "opened" })); // merge PUT
     await mrCommand(["merge", "42", "--auto", "--squash"], ctx);
     const fields = glApiMock.mock.calls[1][1].fields;
     expect(fields).toContain("squash=true");
     expect(fields).toContain("merge_when_pipeline_succeeds=true");
+  });
+
+  it("--auto reports the head pipeline it is gated on and pins the merge to its sha", async () => {
+    glApiMock.mockResolvedValueOnce(gatedMr()); // state check
+    glApiMock.mockResolvedValueOnce(mr({ state: "opened" })); // merge PUT
+    const out = await mrCommand(["merge", "42", "--auto"], ctx);
+    expect(glApiMock.mock.calls[1][1].rawFields).toContain(`sha=${NEW_HEAD}`);
+    expect(out).toContain("gated_pipeline: 101");
+    expect(out).toContain(`gated_sha: ${NEW_HEAD}`);
+  });
+
+  it("--auto right after a force-push waits for the new head's pipeline instead of merging the untested head", async () => {
+    // The MR already moved to the force-pushed head, but its head_pipeline is
+    // still the one that passed on the pre-push head: GitLab sees no pipeline
+    // for the new head and would merge it at once.
+    const stale = mr({
+      sha: NEW_HEAD,
+      head_pipeline: { id: 100, sha: OLD_HEAD, status: "success" },
+    });
+    glApiMock.mockResolvedValueOnce(stale); // state check
+    glApiMock.mockResolvedValueOnce(stale); // poll 1: no pipeline yet
+    glApiMock.mockResolvedValueOnce(gatedMr()); // poll 2: pipeline created
+    glApiMock.mockResolvedValueOnce(
+      mr({ state: "opened", merge_when_pipeline_succeeds: true }),
+    ); // merge PUT
+    const out = await mrCommand(["merge", "42", "--auto"], ctx);
+    const paths = glApiMock.mock.calls.map((c) => c[0]);
+    expect(paths.filter((p) => p.endsWith("/merge"))).toHaveLength(1);
+    expect(paths.at(-1)).toBe(`projects/${PID}/merge_requests/42/merge`);
+    expect(glApiMock.mock.calls.at(-1)![1].rawFields).toContain(
+      `sha=${NEW_HEAD}`,
+    );
+    expect(out).toContain("auto_merge: enabled");
+    expect(out).toContain("gated_pipeline: 101");
+    expect(out).toContain(`gated_sha: ${NEW_HEAD}`);
+  });
+
+  it("--auto refuses without merging when no pipeline appears on the new head", async () => {
+    const stale = mr({
+      sha: NEW_HEAD,
+      head_pipeline: { id: 100, sha: OLD_HEAD, status: "success" },
+    });
+    glApiMock.mockResolvedValue(stale);
+    const err = await mrCommand(["merge", "42", "--auto"], ctx).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(AxiError);
+    expect((err as AxiError).code).toBe("TIMEOUT");
+    expect((err as AxiError).message).toContain(NEW_HEAD);
+    expect((err as AxiError).suggestions.join("\n")).toContain(
+      "glab-axi mr checks 42",
+    );
+    expect(
+      glApiMock.mock.calls.some((c) => String(c[0]).endsWith("/merge")),
+    ).toBe(false);
+  });
+
+  it("--auto waits for a first pipeline when the project requires one to merge", async () => {
+    const fresh = mr({ sha: NEW_HEAD, head_pipeline: null });
+    glApiMock.mockImplementation(async (path: string) => {
+      if (path === `projects/${PID}/merge_requests/42/pipelines?per_page=1`)
+        return [];
+      if (path === `projects/${PID}`)
+        return { only_allow_merge_if_pipeline_succeeds: true };
+      if (path.endsWith("/merge")) return mr({ state: "opened" });
+      return glApiMock.mock.calls.filter((c) => c[0] === path).length > 1
+        ? gatedMr()
+        : fresh;
+    });
+    const out = await mrCommand(["merge", "42", "--auto"], ctx);
+    expect(out).toContain("gated_pipeline: 101");
+  });
+
+  it("--auto keeps merging at once in a project that has never run a pipeline", async () => {
+    glApiMock.mockImplementation(async (path: string) => {
+      if (path === `projects/${PID}/merge_requests/42/pipelines?per_page=1`)
+        return [];
+      if (path === `projects/${PID}`)
+        return { only_allow_merge_if_pipeline_succeeds: false };
+      if (path.endsWith("/merge"))
+        return mr({ state: "merged", merge_commit_sha: "abc123" });
+      return mr({ sha: NEW_HEAD, head_pipeline: null });
+    });
+    const out = await mrCommand(["merge", "42", "--auto"], ctx);
+    const put = glApiMock.mock.calls.find((c) => c[0].endsWith("/merge"))!;
+    expect(put[1].rawFields).not.toContain(`sha=${NEW_HEAD}`);
+    expect(out).toContain("abc123");
+    expect(out).not.toContain("gated_pipeline");
+  });
+
+  it("--auto accepts a merged-results pipeline whose merge commit carries the head", async () => {
+    glApiMock.mockImplementation(async (path: string) => {
+      if (path === `projects/${PID}/repository/commits/${MERGE_REF}`)
+        return { id: MERGE_REF, parent_ids: [OLD_HEAD, NEW_HEAD] };
+      if (path.endsWith("/merge")) return mr({ state: "opened" });
+      return mr({
+        sha: NEW_HEAD,
+        head_pipeline: {
+          id: 102,
+          sha: MERGE_REF,
+          ref: "refs/merge-requests/42/merge",
+          status: "running",
+        },
+      });
+    });
+    const out = await mrCommand(["merge", "42", "--auto"], ctx);
+    expect(out).toContain("gated_pipeline: 102");
+    expect(out).toContain(`gated_sha: ${NEW_HEAD}`);
+  });
+
+  it("--auto fails with CONFLICT when the head moves past the gated sha before the merge", async () => {
+    glApiMock.mockResolvedValueOnce(gatedMr()); // state check
+    glApiMock.mockRejectedValueOnce(
+      new AxiError("SHA does not match HEAD of source branch", "CONFLICT"),
+    ); // merge PUT
+    const err = await mrCommand(["merge", "42", "--auto"], ctx).catch(
+      (e: unknown) => e,
+    );
+    expect((err as AxiError).code).toBe("CONFLICT");
+    expect((err as AxiError).message).toContain(NEW_HEAD);
+    expect((err as AxiError).suggestions.join("\n")).toContain(
+      "glab-axi mr merge 42 --auto",
+    );
   });
 
   it("rejects --auto combined with --rebase", async () => {
