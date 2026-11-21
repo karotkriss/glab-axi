@@ -686,9 +686,19 @@ describe("mr merge", () => {
   });
 
   it("--auto accepts a merged-results pipeline whose merge commit carries the head", async () => {
+    glApiResultMock.mockImplementation(async (path: string) =>
+      path === `projects/${PID}/repository/commits/${MERGE_REF}`
+        ? {
+            exitCode: 0,
+            stderr: "",
+            stdout: JSON.stringify({
+              id: MERGE_REF,
+              parent_ids: [OLD_HEAD, NEW_HEAD],
+            }),
+          }
+        : { exitCode: 1, stderr: "404 Not Found", stdout: "" },
+    );
     glApiMock.mockImplementation(async (path: string) => {
-      if (path === `projects/${PID}/repository/commits/${MERGE_REF}`)
-        return { id: MERGE_REF, parent_ids: [OLD_HEAD, NEW_HEAD] };
       if (path.endsWith("/merge")) return mr({ state: "opened" });
       return mr({
         sha: NEW_HEAD,
@@ -703,6 +713,36 @@ describe("mr merge", () => {
     const out = await mrCommand(["merge", "42", "--auto"], ctx);
     expect(out).toContain("gated_pipeline: 102");
     expect(out).toContain(`gated_sha: ${NEW_HEAD}`);
+  });
+
+  it("--auto keeps waiting, then refuses, when a stale merged-results pipeline's merge commit is gone", async () => {
+    glApiResultMock.mockResolvedValue({
+      exitCode: 1,
+      stderr: "404 Commit Not Found",
+      stdout: "",
+    });
+    glApiMock.mockImplementation(async (path: string) => {
+      if (path.includes("/repository/commits/"))
+        throw new AxiError("404 Commit Not Found", "NOT_FOUND");
+      if (path === `projects/${PID}`) return { builds_access_level: "enabled" };
+      if (path.endsWith("/merge")) return mr({ state: "merged" });
+      return mr({
+        sha: NEW_HEAD,
+        head_pipeline: {
+          id: 100,
+          sha: MERGE_REF,
+          ref: "refs/merge-requests/42/merge",
+          status: "success",
+        },
+      });
+    });
+    const err = await mrCommand(["merge", "42", "--auto"], ctx).catch(
+      (e: unknown) => e,
+    );
+    expect((err as AxiError).code).toBe("TIMEOUT");
+    expect(
+      glApiMock.mock.calls.some((c) => String(c[0]).endsWith("/merge")),
+    ).toBe(false);
   });
 
   it("--auto fails with CONFLICT when the head moves past the gated sha before the merge", async () => {

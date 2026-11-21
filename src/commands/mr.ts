@@ -786,11 +786,14 @@ async function headPipelineOf(
     typeof p.sha === "string" &&
     /^refs\/merge-requests\/\d+\/(?:merge|train)$/.test(String(p.ref ?? ""))
   ) {
-    const commit = await glApi<Json>(
+    const res = await glApiResult(
       `projects/${projectId(ctx)}/repository/commits/${p.sha}`,
       { ctx },
     );
-    if ((commit.parent_ids ?? []).includes(head))
+    if (
+      res.exitCode === 0 &&
+      (JSON.parse(res.stdout).parent_ids ?? []).includes(head)
+    )
       return { id: p.id, sha: head };
   }
   return undefined;
