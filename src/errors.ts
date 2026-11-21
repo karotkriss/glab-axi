@@ -131,8 +131,8 @@ function firstErrorLine(stderr: string): string {
 
 /** Translate raw CLI stderr into a structured AxiError. */
 export function mapGlError(stderr: string, exitCode: number): AxiError {
-  const status = stderr.match(/\(HTTP (\d{3})\)|HTTP (\d{3})/);
-  const httpStatus = status ? Number(status[1] ?? status[2]) : undefined;
+  const status = stderr.match(/HTTP (\d{3})/);
+  const httpStatus = status ? Number(status[1]) : undefined;
   const tag = httpStatus ? ` (HTTP ${httpStatus})` : "";
   if (UNMARSHAL_QUIRK.test(stderr)) {
     const code =
