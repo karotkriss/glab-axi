@@ -607,6 +607,7 @@ describe("mr merge", () => {
     glApiMock.mockImplementation(async (path: string) => {
       if (path === `projects/${PID}/merge_requests/42/pipelines?per_page=1`)
         return [];
+      if (path === `projects/${PID}/pipelines?per_page=1`) return [];
       if (path === `projects/${PID}`)
         return { only_allow_merge_if_pipeline_succeeds: true };
       if (path.endsWith("/merge")) return mr({ state: "opened" });
@@ -618,10 +619,35 @@ describe("mr merge", () => {
     expect(out).toContain("gated_pipeline: 101");
   });
 
+  it("--auto waits for a new MR's first pipeline in a project that runs pipelines", async () => {
+    // push, `mr create`, then `mr merge --auto` at once: GitLab has not created
+    // the MR's first pipeline yet and the project does not require one, but
+    // the project has run pipelines before, so merging now skips CI.
+    const fresh = mr({ sha: NEW_HEAD, head_pipeline: null });
+    glApiMock.mockImplementation(async (path: string) => {
+      if (path === `projects/${PID}/merge_requests/42/pipelines?per_page=1`)
+        return [];
+      if (path === `projects/${PID}/pipelines?per_page=1`)
+        return [{ id: 7, sha: OLD_HEAD, ref: "main", status: "success" }];
+      if (path === `projects/${PID}`)
+        return { only_allow_merge_if_pipeline_succeeds: false };
+      if (path.endsWith("/merge")) return mr({ state: "opened" });
+      return glApiMock.mock.calls.filter((c) => c[0] === path).length > 2
+        ? gatedMr()
+        : fresh;
+    });
+    const out = await mrCommand(["merge", "42", "--auto"], ctx);
+    const put = glApiMock.mock.calls.find((c) => c[0].endsWith("/merge"))!;
+    expect(put[1].rawFields).toContain(`sha=${NEW_HEAD}`);
+    expect(out).toContain("gated_pipeline: 101");
+    expect(out).toContain(`gated_sha: ${NEW_HEAD}`);
+  });
+
   it("--auto keeps merging at once in a project that has never run a pipeline", async () => {
     glApiMock.mockImplementation(async (path: string) => {
       if (path === `projects/${PID}/merge_requests/42/pipelines?per_page=1`)
         return [];
+      if (path === `projects/${PID}/pipelines?per_page=1`) return [];
       if (path === `projects/${PID}`)
         return { only_allow_merge_if_pipeline_succeeds: false };
       if (path.endsWith("/merge"))
