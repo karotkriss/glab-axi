@@ -377,7 +377,7 @@ flags{comment}:
   --body <text> or --body-file <path> (required)
 notes:
   merge diagnoses a refusal (conflicts, draft, unresolved discussions, missing approvals, a pending pipeline, etc.) instead of passing through GitLab's opaque error, and suggests the command that clears it. A merge 401 is reported as FORBIDDEN only when GET /user reconfirms the account; a confirmed /user 401 remains AUTH_REQUIRED, and any other reconfirmation result is reported as inconclusive.
-  merge --auto gates on a pipeline for the MR's current head commit: when the MR has run pipelines before or the project requires a passing one, it waits up to 30s for a pipeline on that head (a push leaves the old head's pipeline in place until the new one starts) and refuses with TIMEOUT if none appears, then pins the merge to that head and reports gated_pipeline and gated_sha. A project that has never run a pipeline here still merges at once.
+  merge --auto gates on a pipeline for the MR's current head commit: when the MR or the project has run pipelines before, or the project requires a passing one, it waits up to 30s for a pipeline on that head (a push leaves the old head's pipeline in place until the new one starts) and refuses with TIMEOUT if none appears, then pins the merge to that head and reports gated_pipeline and gated_sha. A project that has never run a pipeline still merges at once.
   merge --sha pins the merge to the head commit you verified (gh's --match-head-commit): if a push moved the source branch since, GitLab refuses the merge and it fails with CONFLICT instead of merging unverified code. An already-merged MR is a no-op only when its merged head matches the pin; otherwise it fails with CONFLICT naming both heads. It cannot be combined with --rebase, which replaces the head.
 examples:
   glab-axi mr list --state all --head feature-1 --limit 1
@@ -797,9 +797,11 @@ async function headPipelineOf(
 }
 
 /**
- * Whether this MR's merge should wait for a pipeline: it has run pipelines
- * before, or the project refuses merges without a passing one. A project that
- * has never run a pipeline here keeps GitLab's own immediate auto-merge.
+ * Whether this MR's merge should wait for a pipeline: the MR has run pipelines
+ * before, the project has run any pipeline (a fresh MR's first pipeline starts
+ * only after the MR exists), or the project refuses merges without a passing
+ * one. A project that has never run a pipeline keeps GitLab's own immediate
+ * auto-merge.
  */
 async function expectsPipeline(
   mr: Json,
@@ -807,11 +809,12 @@ async function expectsPipeline(
   ctx?: RepoContext,
 ): Promise<boolean> {
   if (mr.head_pipeline) return true;
-  const pipelines = await glApi<Json[]>(
+  for (const path of [
     `${mrPath(ctx, iid, "/pipelines")}?per_page=1`,
-    { ctx },
-  );
-  if (pipelines.length > 0) return true;
+    `projects/${projectId(ctx)}/pipelines?per_page=1`,
+  ]) {
+    if ((await glApi<Json[]>(path, { ctx })).length > 0) return true;
+  }
   const project = await glApi<Json>(`projects/${projectId(ctx)}`, { ctx });
   return project.only_allow_merge_if_pipeline_succeeds === true;
 }
