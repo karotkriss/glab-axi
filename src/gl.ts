@@ -3,6 +3,7 @@ import { accessSync, constants, realpathSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import {
   argumentTooLargeError,
+  outputTooLargeError,
   AxiError,
   glNotInstalledError,
   mapGlError,
@@ -184,7 +185,7 @@ function run(
   input?: string | Buffer,
   binary = false,
 ): Promise<ExecResult> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     // ponytail: a binary response is buffered whole (up to the cap), not
     // streamed to stdout; stream if artifacts ever outgrow it.
     const child = execFile(
@@ -211,11 +212,7 @@ function run(
         }
         if (err && err.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") {
           const cap = binary ? MAX_BINARY_BUFFER_BYTES : MAX_BUFFER_BYTES;
-          resolve({
-            stdout: "",
-            stderr: `Response exceeds the ${cap / 1024 / 1024} MB output limit`,
-            exitCode: 1,
-          });
+          reject(outputTooLargeError(cap / 1024 / 1024));
           return;
         }
         const exitCode = err
