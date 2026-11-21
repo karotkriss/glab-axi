@@ -800,23 +800,30 @@ async function headPipelineOf(
  * Whether this MR's merge should wait for a pipeline: the MR has run pipelines
  * before, the project has run any pipeline (a fresh MR's first pipeline starts
  * only after the MR exists), or the project refuses merges without a passing
- * one. A project that has never run a pipeline keeps GitLab's own immediate
- * auto-merge.
+ * one. A project with CI/CD turned off can run no pipeline (and denies the
+ * pipeline lists), and a project that has never run one keeps GitLab's own
+ * immediate auto-merge.
  */
 async function expectsPipeline(
   mr: Json,
   iid: number,
   ctx?: RepoContext,
 ): Promise<boolean> {
-  if (mr.head_pipeline) return true;
+  const project = await glApi<Json>(`projects/${projectId(ctx)}`, { ctx });
+  if (
+    project.builds_access_level === "disabled" ||
+    project.jobs_enabled === false
+  )
+    return false;
+  if (mr.head_pipeline || project.only_allow_merge_if_pipeline_succeeds)
+    return true;
   for (const path of [
     `${mrPath(ctx, iid, "/pipelines")}?per_page=1`,
     `projects/${projectId(ctx)}/pipelines?per_page=1`,
   ]) {
     if ((await glApi<Json[]>(path, { ctx })).length > 0) return true;
   }
-  const project = await glApi<Json>(`projects/${projectId(ctx)}`, { ctx });
-  return project.only_allow_merge_if_pipeline_succeeds === true;
+  return false;
 }
 
 /**

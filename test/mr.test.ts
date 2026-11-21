@@ -565,6 +565,7 @@ describe("mr merge", () => {
       head_pipeline: { id: 100, sha: OLD_HEAD, status: "success" },
     });
     glApiMock.mockResolvedValueOnce(stale); // state check
+    glApiMock.mockResolvedValueOnce({ builds_access_level: "enabled" }); // project
     glApiMock.mockResolvedValueOnce(stale); // poll 1: no pipeline yet
     glApiMock.mockResolvedValueOnce(gatedMr()); // poll 2: pipeline created
     glApiMock.mockResolvedValueOnce(
@@ -641,6 +642,26 @@ describe("mr merge", () => {
     expect(put[1].rawFields).toContain(`sha=${NEW_HEAD}`);
     expect(out).toContain("gated_pipeline: 101");
     expect(out).toContain(`gated_sha: ${NEW_HEAD}`);
+  });
+
+  it("--auto merges at once in a project with CI/CD turned off, whose pipeline lists are forbidden", async () => {
+    glApiMock.mockImplementation(async (path: string) => {
+      if (path.includes("/pipelines"))
+        throw new AxiError("403 Forbidden", "FORBIDDEN");
+      if (path === `projects/${PID}`)
+        return {
+          builds_access_level: "disabled",
+          only_allow_merge_if_pipeline_succeeds: false,
+        };
+      if (path.endsWith("/merge"))
+        return mr({ state: "merged", merge_commit_sha: "abc123" });
+      return mr({ sha: NEW_HEAD, head_pipeline: null });
+    });
+    const out = await mrCommand(["merge", "42", "--auto"], ctx);
+    const put = glApiMock.mock.calls.find((c) => c[0].endsWith("/merge"))!;
+    expect(put[1].rawFields).not.toContain(`sha=${NEW_HEAD}`);
+    expect(out).toContain("abc123");
+    expect(out).not.toContain("gated_pipeline");
   });
 
   it("--auto keeps merging at once in a project that has never run a pipeline", async () => {
