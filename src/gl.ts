@@ -17,6 +17,13 @@ export interface ExecResult {
   stdout: string;
   stderr: string;
   exitCode: number;
+  /**
+   * The undecoded response, present only when the call asked for `binary`.
+   * On a binary call `stdout` is empty on success (decoding a large artifact
+   * as text is both wasteful and lossy); on failure it holds the decoded text
+   * so error mapping works as usual.
+   */
+  bytes?: Buffer;
 }
 
 export interface GlApiOptions {
@@ -55,10 +62,18 @@ export interface GlApiOptions {
   /** Extra HTTP headers: glab -H key:value. */
   headers?: string[];
   paginate?: boolean;
+  /**
+   * Capture stdout as undecoded bytes (`ExecResult.bytes`), prefixed with the
+   * response headers (`-i`, skipped under `paginate`, which repeats them per
+   * page). Text decoding replaces every non-UTF-8 byte, so a binary response -
+   * a CI job artifact - cannot round-trip through a string.
+   */
+  binary?: boolean;
   ctx?: RepoContext;
 }
 
 const MAX_BUFFER_BYTES = 20 * 1024 * 1024; // 20 MB
+const MAX_BINARY_BUFFER_BYTES = 1024 * 1024 * 1024; // 1 GiB, CI artifacts
 
 /** URL-encode a project's full namespace path for use as a REST :id. */
 export function projectId(ctx?: RepoContext): string {
@@ -130,10 +145,12 @@ function runApi(
   opts: GlApiOptions,
   extraArgs: string[] = [],
 ): Promise<ExecResult> {
+  const headers = opts.binary && !opts.paginate ? ["-i"] : [];
   return run(
-    [...buildApiArgs(path, opts), ...extraArgs],
+    [...buildApiArgs(path, opts), ...extraArgs, ...headers],
     opts.ctx,
     opts.body?.content ?? opts.stdinField?.value,
+    opts.binary,
   );
 }
 
@@ -151,13 +168,20 @@ function run(
   args: string[],
   ctx?: RepoContext,
   input?: string | Buffer,
+  binary = false,
 ): Promise<ExecResult> {
   return new Promise((resolve) => {
+    // ponytail: a binary response is buffered whole (up to the cap), not
+    // streamed to stdout; stream if artifacts ever outgrow it.
     const child = execFile(
       "glab",
       args,
-      { maxBuffer: MAX_BUFFER_BYTES, env: envFor(ctx) },
-      (error, stdout, stderr) => {
+      {
+        maxBuffer: binary ? MAX_BINARY_BUFFER_BYTES : MAX_BUFFER_BYTES,
+        env: envFor(ctx),
+        ...(binary ? { encoding: "buffer" as const } : {}),
+      },
+      (error, out: string | Buffer, stderr: string | Buffer) => {
         const err = error as (Error & { code?: string | number }) | null;
         if (err && err.code === "ENOENT") {
           resolve({ stdout: "", stderr: "ENOENT", exitCode: 127 });
@@ -176,11 +200,17 @@ function run(
             ? err.code
             : 1
           : 0;
-        resolve({
-          stdout: stdout ?? "",
-          stderr: stderr ?? "",
-          exitCode,
-        });
+        const err2 = String(stderr ?? "");
+        if (Buffer.isBuffer(out)) {
+          resolve({
+            stdout: exitCode === 0 ? "" : out.toString("utf8"),
+            stderr: err2,
+            exitCode,
+            bytes: out,
+          });
+          return;
+        }
+        resolve({ stdout: out ?? "", stderr: err2, exitCode });
       },
     );
     // Only write when a value was withheld from argv; a child that is not

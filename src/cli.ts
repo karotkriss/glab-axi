@@ -17,6 +17,7 @@ import { variableCommand, VARIABLE_HELP } from "./commands/variable.js";
 import { secretCommand, SECRET_HELP } from "./commands/secret.js";
 import { releaseCommand, RELEASE_HELP } from "./commands/release.js";
 import { searchCommand, SEARCH_HELP } from "./commands/search.js";
+import { takeRawOutput } from "./rawout.js";
 import { apiCommand, API_HELP } from "./commands/api.js";
 import { setupCommand, SETUP_HELP } from "./commands/setup.js";
 import { authCommand, AUTH_HELP } from "./commands/auth.js";
@@ -111,17 +112,25 @@ for (const [name, handler] of Object.entries(RAW_COMMANDS)) {
 export async function main(
   options: {
     argv?: string[];
-    stdout?: { write: (chunk: string) => unknown };
+    stdout?: { write: (chunk: string | Uint8Array) => unknown };
   } = {},
 ): Promise<void> {
-  const stdout = options.stdout ?? process.stdout;
+  const sink = options.stdout ?? process.stdout;
+  // Raw bytes (`api --raw` on a binary response) replace the SDK's text write,
+  // which would otherwise append a newline to the download.
+  const stdout = {
+    write: (chunk: string) => {
+      const bytes = takeRawOutput();
+      return sink.write(bytes ?? chunk);
+    },
+  };
   try {
     await runAxiCli<RepoContext | undefined>({
       ...(options.argv ? { argv: options.argv } : {}),
       description: DESCRIPTION,
       version: VERSION,
       topLevelHelp: TOP_HELP,
-      ...(options.stdout ? { stdout: options.stdout } : {}),
+      stdout,
       home: withRepoContext(undefined, homeCommand),
       commands: COMMANDS,
       getCommandHelp: (command) => COMMAND_HELP[command],
