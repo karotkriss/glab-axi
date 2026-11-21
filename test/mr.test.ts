@@ -598,6 +598,9 @@ describe("mr merge", () => {
     expect((err as AxiError).suggestions.join("\n")).toContain(
       "glab-axi mr checks 42",
     );
+    expect((err as AxiError).suggestions.join("\n")).toContain(
+      `glab-axi mr merge 42 --sha ${NEW_HEAD}`,
+    );
     expect(
       glApiMock.mock.calls.some((c) => String(c[0]).endsWith("/merge")),
     ).toBe(false);
