@@ -722,8 +722,6 @@ describe("mr merge", () => {
       stdout: "",
     });
     glApiMock.mockImplementation(async (path: string) => {
-      if (path.includes("/repository/commits/"))
-        throw new AxiError("404 Commit Not Found", "NOT_FOUND");
       if (path === `projects/${PID}`) return { builds_access_level: "enabled" };
       if (path.endsWith("/merge")) return mr({ state: "merged" });
       return mr({
@@ -743,6 +741,34 @@ describe("mr merge", () => {
     expect(
       glApiMock.mock.calls.some((c) => String(c[0]).endsWith("/merge")),
     ).toBe(false);
+  });
+
+  it("--auto --sha fails with CONFLICT at once when the pinned sha is not the current head", async () => {
+    glApiMock.mockImplementation(async (path: string) => {
+      if (path.endsWith("/merge"))
+        throw new AxiError(
+          "SHA does not match HEAD of source branch",
+          "CONFLICT",
+        );
+      if (path === `projects/${PID}/pipelines?per_page=1`)
+        return [{ id: 7, sha: OLD_HEAD, ref: "main", status: "success" }];
+      if (path.endsWith("/pipelines?per_page=1")) return [];
+      return mr({ sha: NEW_HEAD, head_pipeline: null });
+    });
+    const err = await mrCommand(
+      ["merge", "42", "--auto", "--sha", OLD_HEAD],
+      ctx,
+    ).catch((e: unknown) => e);
+    expect((err as AxiError).code).toBe("CONFLICT");
+    expect((err as AxiError).message).toContain(OLD_HEAD);
+    expect((err as AxiError).suggestions.join("\n")).not.toContain(
+      `--sha ${NEW_HEAD}`,
+    );
+    expect(
+      glApiMock.mock.calls.filter(
+        (c) => c[0] === `projects/${PID}/merge_requests/42`,
+      ),
+    ).toHaveLength(1);
   });
 
   it("--auto fails with CONFLICT when the head moves past the gated sha before the merge", async () => {
