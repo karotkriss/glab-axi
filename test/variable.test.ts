@@ -71,6 +71,25 @@ describe("variable list", () => {
     expect(out).toContain("NODE_ENV");
   });
 
+  it("lists keys and flags without values by default", async () => {
+    glApiMock.mockResolvedValueOnce([
+      variable({ key: "DB_URL", value: "postgres://u:p@db", protected: true }),
+    ]);
+    const out = await variableCommand(["list"], ctx);
+    expect(out).toContain("variables[1]{key,masked,protected,env}:");
+    expect(out).toContain("DB_URL,no,yes,*");
+    expect(out).not.toContain("postgres://u:p@db");
+  });
+
+  it("includes values only with --show-values", async () => {
+    glApiMock.mockResolvedValueOnce([
+      variable({ key: "DB_URL", value: "postgres://u:p@db" }),
+    ]);
+    const out = await variableCommand(["list", "--show-values"], ctx);
+    expect(out).toContain("variables[1]{key,value,masked,protected,env}:");
+    expect(out).toContain("postgres://u:p@db");
+  });
+
   it("hides masked variables (those belong to `secret list`)", async () => {
     glApiMock.mockResolvedValueOnce([
       variable(),
