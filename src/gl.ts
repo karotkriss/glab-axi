@@ -152,14 +152,24 @@ async function runApi(
   if (result.exitCode === 0 || !UNMARSHAL_QUIRK.test(result.stderr))
     return result;
   // The CLI drops both the status and the body of an object-valued error.
-  // Replay with `-i` to read the status line. Only a replay that is itself a
-  // 4xx is trusted, so a request GitLab did not reject is never re-reported.
+  // A call already made with `-i` carries the status line; otherwise replay
+  // with `-i` to read it. Only a 4xx status is trusted, so a request GitLab
+  // did not reject is never re-reported.
   // ponytail: a replay re-sends the request; harmless for a rejected 4xx.
-  const probe = await run([...args, "-i"], opts.ctx, input);
-  const status = probe.stdout.match(/^HTTP\/\S+ (4\d\d)\b/m)?.[1];
+  const status =
+    clientErrorStatus(result.stdout) ??
+    (args.includes("-i")
+      ? undefined
+      : clientErrorStatus(
+          (await run([...args, "-i"], opts.ctx, input)).stdout,
+        ));
   return status
     ? { ...result, stderr: `${result.stderr.trim()} (HTTP ${status})` }
     : result;
+}
+
+function clientErrorStatus(stdout: string): string | undefined {
+  return stdout.match(/^HTTP\/\S+ (4\d\d)\b/m)?.[1];
 }
 
 /**
