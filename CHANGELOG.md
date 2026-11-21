@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `variable list` no longer prints variable values. It lists each key with its masked, protected, and environment scope flags, so surveying variables cannot leak a value into an agent transcript. Pass `--show-values` to include the `value` column. `variable get` still shows the value of the one variable it names.
+
 ### Added
 
 - `api --input <file|->` sends a JSON request body from a file or from stdin. This process reads the body and passes it on stdin, not on the command line. A missing file, empty stdin, invalid JSON, a repeated `--input`, or `--field`/`--raw-field` with `--input` is an error.

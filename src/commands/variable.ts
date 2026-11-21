@@ -190,9 +190,19 @@ export async function deleteVariable(
 // Schemas
 // ---------------------------------------------------------------------------
 
+// Keys and flags only: listing is how agents survey variables, and a value
+// column leaked secrets into transcripts. Values are opt-in via --show-values.
 const listSchema: FieldDef[] = [
   field("key"),
+  boolYesNo("masked"),
+  boolYesNo("protected"),
+  field("environment_scope", "env"),
+];
+
+const listWithValuesSchema: FieldDef[] = [
+  field("key"),
   field("value"),
+  boolYesNo("masked"),
   boolYesNo("protected"),
   field("environment_scope", "env"),
 ];
@@ -213,14 +223,17 @@ export const VARIABLE_HELP = `usage: glab-axi variable <subcommand> [flags]
 subcommands[4]:
   list, get <name>, set <name>, delete <name>
 maps to plain (unmasked) GitLab CI/CD variables - use \`secret\` for masked ones
+notes:
+  list shows keys and flags only; values are hidden unless --show-values is passed
 flags{list}:
-  --limit <n> (default 100)
+  --limit <n> (default 100), --show-values! (include values; hidden by default)
 flags{get,view,set,delete,rm}:
   --env <scope> (environment scope, default "*")
 flags{set}:
   --value <value> (required; reads from piped stdin if omitted), --protected!
 examples:
   glab-axi variable list
+  glab-axi variable list --show-values
   glab-axi variable get NODE_ENV
   glab-axi variable set NODE_ENV --value production
   printf %s "production" | glab-axi variable set NODE_ENV
@@ -235,6 +248,7 @@ async function variableList(
   ctx?: RepoContext,
 ): Promise<string> {
   const limit = parseLimit(takeFlag(args, "--limit"), 100);
+  const showValues = takeBoolFlag(args, "--show-values");
 
   const params = new URLSearchParams();
   params.set("per_page", String(limit));
@@ -269,7 +283,11 @@ async function variableList(
       count: items.length,
       limit: truncated ? items.length : undefined,
     }),
-    renderList("variables", items, listSchema),
+    renderList(
+      "variables",
+      items,
+      showValues ? listWithValuesSchema : listSchema,
+    ),
     renderHelp(
       getSuggestions({
         domain: "variable",
