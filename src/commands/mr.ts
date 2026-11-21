@@ -377,7 +377,7 @@ flags{comment}:
   --body <text> or --body-file <path> (required)
 notes:
   merge diagnoses a refusal (conflicts, draft, unresolved discussions, missing approvals, a pending pipeline, etc.) instead of passing through GitLab's opaque error, and suggests the command that clears it. A merge 401 is reported as FORBIDDEN only when GET /user reconfirms the account; a confirmed /user 401 remains AUTH_REQUIRED, and any other reconfirmation result is reported as inconclusive.
-  merge --auto gates on a pipeline for the MR's current head commit: when the MR or the project has run pipelines before, or the project requires a passing one, it waits up to 30s for a pipeline on that head (a push leaves the old head's pipeline in place until the new one starts) and refuses with TIMEOUT if none appears, then pins the merge to that head and reports gated_pipeline and gated_sha. A project with CI/CD turned off, or that has never run a pipeline and does not require one, still merges at once.
+  merge --auto gates on a pipeline for the MR's current head commit: when the MR or the project has run pipelines before, or the project requires a passing one, it waits up to 30s for a pipeline on that head (a push leaves the old head's pipeline in place until the new one starts) and refuses with TIMEOUT if none appears (for an MR whose CI rules run no pipeline, the error offers a deliberate merge pinned with --sha <head>), then pins the merge to that head and reports gated_pipeline and gated_sha. A project with CI/CD turned off, or that has never run a pipeline and does not require one, still merges at once.
   merge --sha pins the merge to the head commit you verified (gh's --match-head-commit): if a push moved the source branch since, GitLab refuses the merge and it fails with CONFLICT instead of merging unverified code. An already-merged MR is a no-op only when its merged head matches the pin; otherwise it fails with CONFLICT naming both heads. It cannot be combined with --rebase, which replaces the head.
 examples:
   glab-axi mr list --state all --head feature-1 --limit 1
@@ -849,12 +849,18 @@ async function awaitHeadPipeline(
     if (found) return { mr: latest, gate: found };
   }
   const r = repoFlag({ domain: "mr", action: "merge", repo: ctx });
+  const head = latest.sha;
   throw new AxiError(
-    `Merge request !${iid} was not set to auto-merge: no pipeline started on its head ${String(latest.sha ?? "unknown")} within ${(PIPELINE_GATE_POLL_INTERVAL_MS * PIPELINE_GATE_POLL_MAX_ATTEMPTS) / 1000}s, and merging now would merge an untested commit`,
+    `Merge request !${iid} was not set to auto-merge: no pipeline started on its head ${String(head ?? "unknown")} within ${(PIPELINE_GATE_POLL_INTERVAL_MS * PIPELINE_GATE_POLL_MAX_ATTEMPTS) / 1000}s, and merging now would merge an untested commit`,
     "TIMEOUT",
     [
       `Run \`glab-axi mr checks ${iid}${r}\` to see whether a pipeline has started`,
-      `Re-run \`glab-axi mr merge ${iid} --auto${r}\` with the same flags once it has`,
+      `Re-run \`glab-axi mr merge ${iid} --auto${r}\` with the same flags once a pipeline exists on that head`,
+      ...(typeof head === "string"
+        ? [
+            `If this merge request runs no pipeline at all (its CI rules skip it), merge it deliberately pinned to the head with \`glab-axi mr merge ${iid} --sha ${head}${r}\``,
+          ]
+        : []),
     ],
   );
 }
