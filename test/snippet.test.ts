@@ -374,13 +374,37 @@ describe("snippet -R (project snippets)", () => {
   it("view --file reads the project snippet file endpoint", async () => {
     glApiMock.mockResolvedValueOnce({
       id: 9,
-      files: [{ path: "a.txt", raw_url: "https://x/raw/main/a.txt" }],
+      files: [
+        {
+          path: "a.txt",
+          raw_url: "https://x/group/project/-/snippets/9/raw/main/a.txt",
+        },
+      ],
     });
     glRawMock.mockResolvedValueOnce("hello");
     await snippetCommand(["view", "9", "--file", "a.txt"], pctx);
     expect(glApiMock.mock.calls[0][0]).toBe(`${base}/9`);
     expect(glRawMock.mock.calls[0][0]).toBe(
       `${base}/9/files/main/a.txt/raw?line_ending=raw`,
+    );
+  });
+
+  it("view --file reads the ref after the snippet id, not a raw segment in the project path", async () => {
+    const rctx: RepoContext = { ...pctx, project: "org/raw/tools" };
+    glApiMock.mockResolvedValueOnce({
+      id: 9,
+      files: [
+        {
+          path: "a.txt",
+          raw_url:
+            "https://gitlab.example.com/org/raw/tools/-/snippets/9/raw/main/a.txt",
+        },
+      ],
+    });
+    glRawMock.mockResolvedValueOnce("hello");
+    await snippetCommand(["view", "9", "--file", "a.txt"], rctx);
+    expect(glRawMock.mock.calls[0][0]).toBe(
+      "projects/org%2Fraw%2Ftools/snippets/9/files/main/a.txt/raw?line_ending=raw",
     );
   });
 

@@ -214,10 +214,12 @@ async function snippetList(args: string[], ctx?: RepoContext): Promise<string> {
   ]);
 }
 
-/** The ref a snippet's files live on, read from a file's raw_url (`/raw/<ref>/`). */
+/** The ref a snippet's files live on, read from a file's raw_url (`/snippets/<id>/raw/<ref>/`). */
 function refFromRawUrl(rawUrl: unknown): string {
   const m =
-    typeof rawUrl === "string" ? rawUrl.match(/\/raw\/([^/]+)\//) : null;
+    typeof rawUrl === "string"
+      ? rawUrl.match(/\/snippets\/\d+\/raw\/([^/]+)\//)
+      : null;
   return m ? m[1] : "master";
 }
 
