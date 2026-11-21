@@ -275,4 +275,22 @@ describe("object-valued GitLab errors", () => {
     });
     expect(calls).toHaveLength(2);
   });
+
+  it("reads the status a list call already fetched with -i, without a replay", async () => {
+    const calls: string[][] = [];
+    execFileMock.mockImplementation((_cmd, args, _opts, callback) => {
+      calls.push(args);
+      callback(
+        Object.assign(new Error("x"), { code: 1 }),
+        "HTTP/1.1 403 Forbidden\r\n\r\n",
+        "json: cannot unmarshal object into Go struct field .Message of type string",
+      );
+      return new EventEmitter() as unknown;
+    });
+    await expect(glApiList("projects/x/members")).rejects.toMatchObject({
+      code: "FORBIDDEN",
+      message: expect.stringContaining("(HTTP 403)"),
+    });
+    expect(calls).toHaveLength(1);
+  });
 });
