@@ -250,3 +250,29 @@ describe("glApiList (X-Total plumbing)", () => {
     await expect(glApiList("projects/1/issues")).rejects.toThrow();
   });
 });
+
+describe("object-valued GitLab errors", () => {
+  it("recovers the HTTP status the CLI drops by replaying with -i", async () => {
+    const calls: string[][] = [];
+    execFileMock.mockImplementation((_cmd, args, _opts, callback) => {
+      calls.push(args);
+      const err = Object.assign(new Error("x"), { code: 1 });
+      if (args.includes("-i"))
+        callback(err, "HTTP/1.1 400 Bad Request\r\n\r\n", "json: oops");
+      else
+        callback(
+          err,
+          "",
+          "json: cannot unmarshal object into Go struct field .Message of type string",
+        );
+      return new EventEmitter() as unknown;
+    });
+    await expect(
+      glApi("projects/x/members", { method: "POST" }),
+    ).rejects.toMatchObject({
+      code: "VALIDATION_ERROR",
+      message: expect.stringContaining("(HTTP 400)"),
+    });
+    expect(calls).toHaveLength(2);
+  });
+});
