@@ -135,9 +135,11 @@ export function mapGlError(stderr: string, exitCode: number): AxiError {
   const httpStatus = status ? Number(status[1] ?? status[2]) : undefined;
   const tag = httpStatus ? ` (HTTP ${httpStatus})` : "";
   if (UNMARSHAL_QUIRK.test(stderr)) {
+    const code =
+      (httpStatus && CODE_BY_STATUS[httpStatus]) || "VALIDATION_ERROR";
     return new AxiError(
-      `GitLab rejected the request${httpStatus ? ` with HTTP ${httpStatus} and` : " with"} a validation error whose details the installed CLI version does not pass through`,
-      (httpStatus && CODE_BY_STATUS[httpStatus]) || "VALIDATION_ERROR",
+      `GitLab rejected the request${httpStatus ? ` with HTTP ${httpStatus} and` : " with"} ${code === "VALIDATION_ERROR" ? "a validation error" : "an error"} whose details the installed CLI version does not pass through`,
+      code,
       [
         "Re-check the request's field names and values against the GitLab API documentation for this endpoint",
       ],
