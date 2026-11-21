@@ -94,6 +94,7 @@ nested:
   position[new_line]=85 sends a number; the same --raw-field sends the string
   "85". --field position={...} sends that JSON object. --raw-field does not
   parse JSON. --input cannot be combined with --field or --raw-field.
+  The graphql path keeps the wrapped CLI's encoding, with fields becoming variables.
 examples:
   glab-axi api projects/{project}/members
   glab-axi api GET projects/{project}/merge_requests --field state=opened
@@ -439,27 +440,14 @@ function readInputFile(path: string): string {
       "VALIDATION_ERROR",
     );
   }
-  // TextDecoder strips a leading BOM, so detect it on the bytes or the file
-  // is accepted with no hint.
-  if (
-    raw.length >= 3 &&
-    raw[0] === 0xef &&
-    raw[1] === 0xbb &&
-    raw[2] === 0xbf
-  ) {
-    throw new AxiError(
-      "JSON body starts with a UTF-8 BOM",
-      "VALIDATION_ERROR",
-      ["Remove the byte order mark from the JSON body, then retry"],
-    );
-  }
+  // TextDecoder strips a leading BOM, so a file and stdin behave the same.
   try {
     return new TextDecoder("utf-8", { fatal: true }).decode(raw);
   } catch {
     throw new AxiError(
       `JSON body file is not valid UTF-8: ${path}`,
       "VALIDATION_ERROR",
-      INPUT_HINT,
+      ["Re-encode the file as UTF-8, then retry", ...INPUT_HINT],
     );
   }
 }
@@ -477,13 +465,6 @@ function readJsonInput(source: string): string {
           suggestions: INPUT_HINT,
         })
       : readInputFile(source);
-  if (text.charCodeAt(0) === 0xfeff) {
-    throw new AxiError(
-      "JSON body starts with a UTF-8 BOM",
-      "VALIDATION_ERROR",
-      ["Remove the byte order mark from the JSON body, then retry"],
-    );
-  }
   if (text.trim() === "") {
     throw new AxiError(
       source === "-"
