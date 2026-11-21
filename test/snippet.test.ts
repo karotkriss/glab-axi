@@ -9,6 +9,8 @@ vi.mock("../src/gl.js", () => ({
   glApiList: vi.fn(),
   glApiResult: vi.fn(),
   glRaw: vi.fn(),
+  requireProject: (c: { project?: string }) =>
+    encodeURIComponent(c.project ?? ""),
   errorBody: (result: { stderr: string; stdout: string }) =>
     [result.stderr, result.stdout].filter(Boolean).join("\n"),
 }));
@@ -332,5 +334,79 @@ describe("snippet router", () => {
     await expect(snippetCommand(["bogus"], ctx)).rejects.toThrow(
       "Unknown snippet subcommand",
     );
+  });
+});
+
+describe("snippet -R (project snippets)", () => {
+  const pctx: RepoContext = {
+    host: "gitlab.example.com",
+    project: "group/project",
+    source: "flag",
+  };
+  const base = "projects/group%2Fproject/snippets";
+
+  it("list targets the project endpoint and keeps -R in its help", async () => {
+    glApiListMock.mockResolvedValueOnce({
+      data: [{ id: 3, title: "T" }],
+      total: 1,
+    });
+    const out = await snippetCommand(["list"], pctx);
+    expect(glApiListMock).toHaveBeenCalledWith(`${base}?per_page=30`, {
+      ctx: pctx,
+    });
+    expect(out).toContain("-R gitlab.example.com/group/project");
+  });
+
+  it("create posts to the project endpoint", async () => {
+    glApiMock.mockResolvedValueOnce({
+      id: 9,
+      title: "T",
+      visibility: "private",
+    });
+    await snippetCommand(
+      ["create", "--title", "T", "--file", "a.txt=hi"],
+      pctx,
+    );
+    expect(glApiMock.mock.calls[0][0]).toBe(base);
+    expect(glApiMock.mock.calls[0][1].method).toBe("POST");
+  });
+
+  it("view --file reads the project snippet file endpoint", async () => {
+    glApiMock.mockResolvedValueOnce({
+      id: 9,
+      files: [{ path: "a.txt", raw_url: "https://x/raw/main/a.txt" }],
+    });
+    glRawMock.mockResolvedValueOnce("hello");
+    await snippetCommand(["view", "9", "--file", "a.txt"], pctx);
+    expect(glApiMock.mock.calls[0][0]).toBe(`${base}/9`);
+    expect(glRawMock.mock.calls[0][0]).toBe(
+      `${base}/9/files/main/a.txt/raw?line_ending=raw`,
+    );
+  });
+
+  it("edit and delete address the project snippet", async () => {
+    glApiMock.mockResolvedValueOnce({ id: 9, title: "Old", files: [] });
+    glApiMock.mockResolvedValueOnce({ id: 9, title: "New", files: [] });
+    await snippetCommand(["edit", "9", "--title", "New"], pctx);
+    expect(glApiMock.mock.calls[0][0]).toBe(`${base}/9`);
+    expect(glApiMock.mock.calls[1][0]).toBe(`${base}/9`);
+    expect(glApiMock.mock.calls[1][1].method).toBe("PUT");
+
+    glApiResultMock.mockResolvedValue({
+      exitCode: 0,
+      stdout: "{}",
+      stderr: "",
+    });
+    await snippetCommand(["delete", "9"], pctx);
+    expect(glApiResultMock.mock.calls.map((c) => c[0])).toEqual([
+      `${base}/9`,
+      `${base}/9`,
+    ]);
+  });
+
+  it("a project inferred from the git remote stays personal", async () => {
+    glApiListMock.mockResolvedValueOnce({ data: [], total: 0 });
+    await snippetCommand(["list"], { ...pctx, source: "remote" });
+    expect(glApiListMock.mock.calls[0][0]).toBe("snippets?per_page=30");
   });
 });

@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `snippet list/view/create/edit/delete` accept an explicit `-R [host/]group/project` to target that project's snippets (`projects/:id/snippets`). Without `-R`, they still address personal snippets; a project inferred only from the git remote does not switch modes.
 - `api --input <file|->` sends a JSON request body from a file or from stdin. This process reads the body and passes it on stdin, not on the command line. A missing file, empty stdin, invalid JSON, a repeated `--input`, or `--field`/`--raw-field` with `--input` is an error.
 
 ### Fixed
